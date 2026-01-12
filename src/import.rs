@@ -480,6 +480,12 @@ impl ImportedTexture {
             _usage: DmatexUsage::Sampling,
         }
     }
+    pub fn texture(&self) -> Texture {
+        self.texture.clone()
+    }
+    pub fn view(&self) -> TextureView {
+        self.texture_view.clone()
+    }
 }
 
 #[tracing::instrument(level = "debug", skip(device, on_drop))]

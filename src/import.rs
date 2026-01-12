@@ -9,11 +9,9 @@ use ash::vk::{
     self, CommandBufferBeginInfo, FormatFeatureFlags2, ImagePlaneMemoryRequirementsInfo,
     MemoryDedicatedRequirements, MemoryRequirements2, SubresourceLayout,
 };
-use bevy::asset::AssetId;
-use bevy::sprite_render::PreparedMaterial2d;
 use bevy::{
     app::Plugin,
-    asset::{Assets, Handle, RenderAssetUsages},
+    asset::{AssetId, Assets, Handle, RenderAssetUsages},
     ecs::{
         resource::Resource,
         schedule::{IntoScheduleConfigs as _, SystemSet},
@@ -21,7 +19,7 @@ use bevy::{
         world::World,
     },
     image::Image,
-    pbr::{PreparedMaterial, StandardMaterial},
+    log::{debug, debug_span, error, warn},
     platform::collections::HashMap,
     render::{
         Render, RenderApp, RenderSystems,
@@ -33,10 +31,8 @@ use bevy::{
     },
     utils::default,
 };
-use bevy::pbr::prepare_material_bind_groups;
 use drm_fourcc::DrmFourcc;
 use thiserror::Error;
-use tracing::{debug, debug_span, error, warn};
 use wgpu::{
     TextureUsages, TextureUses, TextureViewDescriptor,
     hal::{MemoryFlags, TextureDescriptor, vulkan::Api as Vulkan},

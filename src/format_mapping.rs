@@ -1,7 +1,4 @@
-use ash::vk::{
-    self, DrmFormatModifierProperties2EXT, FormatProperties, FormatProperties2,
-    ImageFormatProperties,
-};
+use ash::vk::{self, FormatProperties, FormatProperties2, ImageFormatProperties};
 use tracing::error;
 
 pub fn get_drm_modifiers(
@@ -21,7 +18,7 @@ pub fn get_drm_modifiers(
         .drm_format_modifier_count
         .try_into()
         .unwrap_or(usize::MAX);
-    let mut buf = vec![DrmFormatModifierProperties2EXT::default(); buf_len];
+    let mut buf = vec![vk::DrmFormatModifierProperties2EXT::default(); buf_len];
 
     let mut drm_modifier_list =
         vk::DrmFormatModifierPropertiesList2EXT::default().drm_format_modifier_properties(&mut buf);

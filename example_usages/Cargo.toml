@@ -4,15 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-zbus = "5.7.0"
+ash.workspace = true
 wlx-capture = { git = "https://github.com/galister/wlx-capture", features = [
-	"wlr",
+    "wlr",
 ] }
 bevy-dmabuf.path = ".."
-color-eyre = "0.6.3"
-# vulkano = "0.35.1"
-tokio = { version = "1", features = ["full"] }
-drm-fourcc = "2.2.0"
-ash = "0.38.0"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 vulkano = { git = "https://github.com/Schmarni-Dev/vulkano", branch = "0_35_dmabuf_fixes" }
-glam = "0.30.4"
+glam.workspace = true
+zbus.workspace = true

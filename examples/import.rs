@@ -4,8 +4,8 @@ use bevy::{
     DefaultPlugins,
     app::{App, AppExit, PostUpdate, PreUpdate, Startup},
     asset::{Assets, Handle},
-    color::Color,
     camera::Camera3d,
+    color::Color,
     ecs::{
         resource::Resource,
         system::{Commands, Res, ResMut},
@@ -18,10 +18,7 @@ use bevy::{
         primitives::{Circle, Cuboid},
     },
     mesh::{Mesh, Mesh3d},
-    pbr::{MeshMaterial3d,  StandardMaterial},
-    render::{
-        pipelined_rendering::PipelinedRenderingPlugin,
-    },
+    pbr::{MeshMaterial3d, StandardMaterial},
     transform::components::Transform,
     utils::default,
 };
@@ -50,7 +47,7 @@ async fn main() -> AppExit {
     App::new()
         .insert_resource(Receiver(rx.into()))
         .init_resource::<PendingDmatex>()
-        .add_plugins(add_dmabuf_init_plugin(DefaultPlugins).disable::<PipelinedRenderingPlugin>())
+        .add_plugins(add_dmabuf_init_plugin(DefaultPlugins))
         .add_plugins(DmabufImportPlugin)
         .add_systems(Startup, setup)
         .add_systems(PreUpdate, update_tex)

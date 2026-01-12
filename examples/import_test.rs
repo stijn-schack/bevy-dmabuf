@@ -19,17 +19,15 @@ use bevy::{
         Quat, Vec3,
         primitives::{Circle, Cuboid},
     },
-        mesh::{Mesh, Mesh3d},
+    mesh::{Mesh, Mesh3d},
     pbr::{MeshMaterial3d, StandardMaterial},
-    render::{
-        pipelined_rendering::PipelinedRenderingPlugin,
-    },
+    render::pipelined_rendering::PipelinedRenderingPlugin,
     transform::components::Transform,
     utils::default,
 };
 use bevy_dmabuf::{
     dmatex::{Dmatex, DmatexPlane},
-    import::{DmabufImportPlugin, ImportedDmatexs, DmatexUsage},
+    import::{DmabufImportPlugin, DmatexUsage, ImportedDmatexs},
     wgpu_init::add_dmabuf_init_plugin,
 };
 use tokio::sync::watch;

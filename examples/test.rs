@@ -1,6 +1,5 @@
 use std::ops::Deref;
 
-use bevy::time::Stopwatch;
 use bevy::{
     asset::RenderAssetUsages,
     image::{TextureFormatPixelInfo as _, Volume as _},
@@ -20,7 +19,7 @@ fn main() -> AppExit {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
         .add_systems(Startup, setup)
-        //.add_systems(Update, update_mat)
+        .add_systems(Update, update_mat)
         .add_plugins(ExtractResourcePlugin::<ImageHandle>::default());
     if let Some(renderapp) = app.get_sub_app_mut(RenderApp) {
         GpuImage::register_system(renderapp, do_stuff.in_set(RenderSystems::PrepareAssets));
@@ -77,7 +76,7 @@ fn do_stuff(
             warn!("invalid texture handle");
             return;
         };
-        info!("setting texture! :3");
+        trace!("setting texture! :3");
         let tex = textures.swap_and_get().deref().clone();
         render_tex.texture_view = tex
             .create_view(&TextureViewDescriptor {

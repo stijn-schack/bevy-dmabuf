@@ -31,13 +31,13 @@ use std::sync::Arc;
 use crate::required_device_extensions;
 use ash::vk::PhysicalDeviceType;
 use bevy::app::{Plugin, PluginGroup, PluginGroupBuilder};
+use bevy::log::debug;
 use bevy::render::renderer::{
     RenderAdapter, RenderAdapterInfo, RenderInstance, RenderQueue, WgpuWrapper,
 };
 use bevy::render::settings::{RenderCreation, RenderResources};
 use bevy::render::{RenderDebugFlags, RenderPlugin};
 use color_eyre::eyre::bail;
-use tracing::debug;
 use wgpu::hal::Api;
 use wgpu::hal::api::Vulkan;
 use wgpu::{MemoryBudgetThresholds, Trace};

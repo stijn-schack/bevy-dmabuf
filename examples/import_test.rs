@@ -4,8 +4,8 @@ use bevy::{
     DefaultPlugins,
     app::{App, AppExit, PostUpdate, PreUpdate, Startup},
     asset::{Assets, Handle},
+    camera::Camera3d,
     color::Color,
-    core_pipeline::core_3d::Camera3d,
     ecs::{
         resource::Resource,
         schedule::{IntoScheduleConfigs, common_conditions::not},
@@ -13,14 +13,15 @@ use bevy::{
     },
     image::Image,
     input::{common_conditions::input_pressed, keyboard::KeyCode},
+    light::PointLight,
     log::{error, info},
     math::{
         Quat, Vec3,
         primitives::{Circle, Cuboid},
     },
-    pbr::{MeshMaterial3d, PointLight, StandardMaterial},
-    render::{
         mesh::{Mesh, Mesh3d},
+    pbr::{MeshMaterial3d, StandardMaterial},
+    render::{
         pipelined_rendering::PipelinedRenderingPlugin,
     },
     transform::components::Transform,
@@ -28,7 +29,7 @@ use bevy::{
 };
 use bevy_dmabuf::{
     dmatex::{Dmatex, DmatexPlane},
-    import::{DmabufImportPlugin, ImportedDmatexs},
+    import::{DmabufImportPlugin, ImportedDmatexs, DmatexUsage},
     wgpu_init::add_dmabuf_init_plugin,
 };
 use tokio::sync::watch;
@@ -89,7 +90,7 @@ fn import_tex(
         .map(clone_dmatex)
     {
         info!("got dmatex");
-        match dmatexs.set(&mut images, buf, None) {
+        match dmatexs.set(&mut images, buf, DmatexUsage::Sampling, None) {
             Ok(image) => {
                 pending.0 = Some(image);
             }

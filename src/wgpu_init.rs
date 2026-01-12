@@ -28,19 +28,19 @@ impl Plugin for DmabufWgpuInitPlugin {
 
 use std::sync::Arc;
 
+use crate::required_device_extensions;
 use ash::vk::PhysicalDeviceType;
 use bevy::app::{Plugin, PluginGroup, PluginGroupBuilder};
-use tracing::debug;
 use bevy::render::renderer::{
     RenderAdapter, RenderAdapterInfo, RenderInstance, RenderQueue, WgpuWrapper,
 };
 use bevy::render::settings::{RenderCreation, RenderResources};
 use bevy::render::{RenderDebugFlags, RenderPlugin};
 use color_eyre::eyre::bail;
+use tracing::debug;
 use wgpu::hal::Api;
 use wgpu::hal::api::Vulkan;
-
-use crate::required_device_extensions;
+use wgpu::{MemoryBudgetThresholds, Trace};
 
 #[cfg(not(target_os = "android"))]
 const VK_TARGET_VERSION_ASH: u32 = ash::vk::make_api_version(0, 1, 2, 0);
@@ -144,6 +144,7 @@ fn init_graphics() -> color_eyre::Result<(
             None,
             instance_extensions,
             flags,
+            MemoryBudgetThresholds::default(),
             has_nv_optimus,
             None,
         )?
@@ -215,8 +216,7 @@ fn init_graphics() -> color_eyre::Result<(
         }?
     };
 
-    let wgpu_instance =
-        unsafe { wgpu::Instance::from_hal::<wgpu::hal::api::Vulkan>(wgpu_vk_instance) };
+    let wgpu_instance = unsafe { wgpu::Instance::from_hal::<Vulkan>(wgpu_vk_instance) };
     let wgpu_adapter = unsafe { wgpu_instance.create_adapter_from_hal(wgpu_exposed_adapter) };
     let limits = wgpu_adapter.limits();
     debug!("wgpu_limits: {limits:#?}");
@@ -228,8 +228,8 @@ fn init_graphics() -> color_eyre::Result<(
                 required_features: wgpu_features,
                 required_limits: limits,
                 memory_hints: wgpu::MemoryHints::Performance,
+                trace: Trace::default(),
             },
-            None,
         )
     }?;
 

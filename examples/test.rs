@@ -1,11 +1,12 @@
 use std::ops::Deref;
 
+use bevy::time::Stopwatch;
 use bevy::{
     asset::RenderAssetUsages,
     image::{TextureFormatPixelInfo as _, Volume as _},
     prelude::*,
     render::{
-        RenderApp, RenderSet,
+        RenderApp, RenderSystems,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::{RenderAssetDependency as _, RenderAssets},
         render_resource::Texture,
@@ -19,10 +20,10 @@ fn main() -> AppExit {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
         .add_systems(Startup, setup)
-        .add_systems(Update, update_mat)
+        //.add_systems(Update, update_mat)
         .add_plugins(ExtractResourcePlugin::<ImageHandle>::default());
     if let Some(renderapp) = app.get_sub_app_mut(RenderApp) {
-        GpuImage::register_system(renderapp, do_stuff.in_set(RenderSet::PrepareAssets));
+        GpuImage::register_system(renderapp, do_stuff.in_set(RenderSystems::PrepareAssets));
     } else {
         warn!("unable to init dmabuf importing!");
     }
@@ -42,7 +43,7 @@ fn do_stuff(
     handle: Res<ImageHandle>,
 ) {
     if textures.is_none() {
-        let byte_len = DESCRIPTOR.format.pixel_size() * DESCRIPTOR.size.volume();
+        let byte_len = DESCRIPTOR.format.pixel_size().unwrap() * DESCRIPTOR.size.volume();
         let data1 = [255, 255, 255, 255]
             .iter()
             .copied()
@@ -77,7 +78,7 @@ fn do_stuff(
             return;
         };
         info!("setting texture! :3");
-        let tex = textures.get().deref().clone();
+        let tex = textures.swap_and_get().deref().clone();
         render_tex.texture_view = tex
             .create_view(&TextureViewDescriptor {
                 label: None,
@@ -100,7 +101,7 @@ fn do_stuff(
 #[derive(Resource, Clone)]
 struct Textures(Texture, Texture);
 impl Textures {
-    fn get(&mut self) -> Texture {
+    fn swap_and_get(&mut self) -> Texture {
         std::mem::swap(&mut self.0, &mut self.1);
         self.0.clone()
     }

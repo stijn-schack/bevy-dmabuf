@@ -2,32 +2,31 @@ use std::sync::{Mutex, mpsc};
 
 use bevy::{
     DefaultPlugins,
-    app::{App, AppExit, PostUpdate, Startup, Update},
+    app::{App, AppExit, PostUpdate, Startup},
     asset::{Assets, Handle},
+    camera::Camera3d,
     color::Color,
-    core_pipeline::core_3d::Camera3d,
     ecs::{
         resource::Resource,
         system::{Commands, Local, Res, ResMut},
     },
     image::Image,
+    light::PointLight,
     log::{error, info},
     math::{
         Quat, Vec3,
         primitives::{Circle, Cuboid},
     },
-    pbr::{MeshMaterial3d, PointLight, StandardMaterial},
+    mesh::{Mesh, Mesh3d},
+    pbr::{MeshMaterial3d, StandardMaterial},
     prelude::{Deref, DerefMut},
-    render::{
-        mesh::{Mesh, Mesh3d},
-        pipelined_rendering::PipelinedRenderingPlugin,
-    },
+    render::pipelined_rendering::PipelinedRenderingPlugin,
     transform::components::Transform,
     utils::default,
 };
 use bevy_dmabuf::{
     dmatex::Dmatex,
-    import::{DmabufImportPlugin, ImportedDmatexs},
+    import::{DmabufImportPlugin, ImportedDmatexs, DmatexUsage},
     wgpu_init::add_dmabuf_init_plugin,
 };
 
@@ -80,7 +79,7 @@ fn update_tex(
 ) {
     if let Some(buf) = receiv.0.get_mut().unwrap().try_iter().last() {
         info!("got dmatex");
-        match dmatexs.set(&mut images, buf, None) {
+        match dmatexs.set(&mut images, buf, DmatexUsage::Sampling, None) {
             Ok(image) => {
                 imported.push(image);
             }

@@ -1,14 +1,11 @@
-use std::{
-    os::fd::AsFd,
-    sync::{Mutex, OnceLock},
-};
+use std::sync::OnceLock;
 
 use bevy::{
     DefaultPlugins,
-    app::{App, AppExit, PostUpdate, PreUpdate, Startup},
+    app::{App, AppExit, PostUpdate, Startup},
     asset::{Assets, Handle},
+    camera::Camera3d,
     color::Color,
-    core_pipeline::core_3d::Camera3d,
     ecs::{
         resource::Resource,
         schedule::{IntoScheduleConfigs, common_conditions::not},
@@ -16,23 +13,22 @@ use bevy::{
     },
     image::Image,
     input::{common_conditions::input_pressed, keyboard::KeyCode},
-    log::{error, info},
+    light::PointLight,
+    log::info,
     math::{
         Quat, Vec3,
         primitives::{Circle, Cuboid},
     },
-    pbr::{MeshMaterial3d, PointLight, StandardMaterial},
+    mesh::{Mesh, Mesh3d},
+    pbr::{MeshMaterial3d, StandardMaterial},
     render::{
-        Render, RenderApp,
-        mesh::{Mesh, Mesh3d},
-        pipelined_rendering::PipelinedRenderingPlugin,
-        renderer::RenderDevice,
+        Render, RenderApp, pipelined_rendering::PipelinedRenderingPlugin, renderer::RenderDevice,
     },
     transform::components::Transform,
     utils::default,
 };
 use bevy_dmabuf::{
-    dmatex::{Dmatex, DmatexPlane},
+    dmatex::Dmatex,
     import::{
         DmabufImportPlugin, DmatexUsage, DropCallback, ImportedDmatexs, ImportedTexture,
         import_texture,

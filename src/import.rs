@@ -22,28 +22,28 @@ use bevy::{
     log::{debug, debug_span, error, warn},
     platform::collections::HashMap,
     render::{
-        Render, RenderApp, RenderSystems,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
-        render_asset::{RenderAssets, prepare_assets},
-        render_resource::{Texture, TextureView},
+        extract_resource::{ExtractResource, ExtractResourcePlugin}, render_asset::{prepare_assets, RenderAssets}, render_resource::{Texture, TextureView},
         renderer::RenderDevice,
         texture::GpuImage,
+        Render,
+        RenderApp,
+        RenderSystems,
     },
     utils::default,
 };
 use drm_fourcc::DrmFourcc;
 use thiserror::Error;
 use wgpu::{
-    TextureUsages, TextureUses, TextureViewDescriptor,
-    hal::{MemoryFlags, TextureDescriptor, vulkan::Api as Vulkan},
+    hal::{vulkan::Api as Vulkan, MemoryFlags, TextureDescriptor}, TextureUsages, TextureUses,
+    TextureViewDescriptor,
 };
 
+use crate::format_mapping::vulkan_to_wgpu;
 use crate::{
     dmatex::Dmatex,
     format_mapping::{
         drm_fourcc_to_vk_format, get_drm_image_modifier_info, get_drm_modifiers, vk_format_to_srgb,
     },
-    wgpu_init::vulkan_to_wgpu,
 };
 
 pub struct DmabufImportPlugin;

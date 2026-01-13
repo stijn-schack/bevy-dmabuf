@@ -19,7 +19,7 @@ use bevy::{
         world::World,
     },
     image::Image,
-    log::{debug, debug_span, error, warn},
+    log::{debug, debug_span, error, trace, warn},
     platform::collections::HashMap,
     render::{
         extract_resource::{ExtractResource, ExtractResourcePlugin}, render_asset::{prepare_assets, RenderAssets}, render_resource::{Texture, TextureView},
@@ -386,7 +386,7 @@ fn insert_dmatex_into_gpu_images(
         };
 
         if let Some(DmaImage::Imported(tex)) = imported.get(&handle) {
-            debug!("setting texture view!");
+            trace!("setting texture view!");
             render_tex.texture_view = tex.texture_view.clone();
             render_tex.size = tex.texture.size();
             render_tex.mip_level_count = tex.texture.mip_level_count();

@@ -494,6 +494,10 @@ pub fn import_texture(
     on_drop: DropCallback,
     usage: DmatexUsage,
 ) -> Result<ImportedTexture, ImportError> {
+    if buf.planes.is_empty() {
+        return Err(ImportError::NoPlanes);
+    }
+
     let vulkan_format = drm_fourcc_to_vk_format(
         DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
     )
@@ -512,19 +516,21 @@ pub fn import_texture(
             .ok_or(ImportError::NotVulkan)?
     };
 
+    let (_format_properties, drm_format_properties) = get_drm_modifiers(
+        dev.shared_instance().raw_instance(),
+        dev.raw_physical_device(),
+        vulkan_format,
+    );
+
+    let vk_drm_modifier = drm_format_properties
+        .iter()
+        .find(|v| v.drm_format_modifier == buf.modifier)
+        .ok_or(ImportError::ModifierInvalid)?;
+
     let (image, mem) = {
-        let (_format_properties, drm_format_properties) = get_drm_modifiers(
-            dev.shared_instance().raw_instance(),
-            dev.raw_physical_device(),
-            vulkan_format,
-        );
         let mut disjoint = false;
-        for plane in buf.planes.iter() {
-            let used_modifier = drm_format_properties
-                .iter()
-                .find(|v| v.drm_format_modifier == plane.modifier)
-                .ok_or(ImportError::ModifierInvalid)?;
-            disjoint |= used_modifier
+        for _plane in buf.planes.iter() {
+            disjoint |= vk_drm_modifier
                 .drm_format_modifier_tiling_features
                 .contains(FormatFeatureFlags2::DISJOINT_KHR);
         }
@@ -537,18 +543,18 @@ pub fn import_texture(
             true => vk::ImageCreateFlags::DISJOINT,
             false => vk::ImageCreateFlags::empty(),
         };
-        for plane in buf.planes.iter() {
-            let _format_info = get_drm_image_modifier_info(
-                dev.shared_instance().raw_instance(),
-                dev.raw_physical_device(),
-                vulkan_format,
-                image_type,
-                usage_flags,
-                create_flags,
-                plane.modifier,
-            )
+
+        let _format_info = get_drm_image_modifier_info(
+            dev.shared_instance().raw_instance(),
+            dev.raw_physical_device(),
+            vulkan_format,
+            image_type,
+            usage_flags,
+            create_flags,
+            buf.modifier,
+        )
             .ok_or(ImportError::ModifierInvalid)?;
-        }
+
         let plane_layouts = buf
             .planes
             .iter()
@@ -561,18 +567,18 @@ pub fn import_texture(
                 size: 0,
             })
             .collect::<Vec<_>>();
-        let modifiers = buf.planes.iter().map(|p| p.modifier).collect::<Vec<_>>();
-        if buf.planes.is_empty() {
-            return Err(ImportError::NoPlanes);
-        }
+
         let mut drm_explicit_create_info = (buf.planes.len() == 1).then(|| {
             vk::ImageDrmFormatModifierExplicitCreateInfoEXT::default()
-                .drm_format_modifier(modifiers[0])
+                .drm_format_modifier(buf.modifier)
                 .plane_layouts(&plane_layouts)
         });
+
+        let modifiers = [buf.modifier];
         let mut drm_list_create_info = (buf.planes.len() > 1).then(|| {
             vk::ImageDrmFormatModifierListCreateInfoEXT::default().drm_format_modifiers(&modifiers)
         });
+
         let mut external_memory_info = vk::ExternalMemoryImageCreateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
 

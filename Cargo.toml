@@ -11,11 +11,9 @@ keywords = ["bevy", "dmabuf", "dmatex"]
 [dependencies]
 ash = "0.38"
 drm-fourcc = "2.2"
-serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 thiserror = "2.0"
 wgpu = "26"
-zvariant = "5.9"
 
 [dependencies.bevy]
 version = "0.17"

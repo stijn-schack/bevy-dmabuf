@@ -1,7 +1,7 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 use std::{
     fmt::Debug,
-    os::fd::{IntoRawFd as _, OwnedFd},
+    os::fd::IntoRawFd as _,
     sync::{Arc, Mutex},
 };
 
@@ -9,7 +9,6 @@ use ash::vk::{
     self, CommandBufferBeginInfo, FormatFeatureFlags2, ImagePlaneMemoryRequirementsInfo,
     MemoryDedicatedRequirements, MemoryRequirements2, SubresourceLayout,
 };
-use bevy::render::RenderPlugin;
 use bevy::{
     app::Plugin,
     asset::{AssetId, Assets, Handle, RenderAssetUsages},
@@ -182,10 +181,7 @@ fn memory_barrier(
 ) {
     unsafe {
         #[allow(clippy::unwrap_used)] // Validation
-        let dev = device
-            .wgpu_device()
-            .as_hal::<Vulkan>()
-            .unwrap();
+        let dev = device.wgpu_device().as_hal::<Vulkan>().unwrap();
         let vk_dev = dev.raw_device();
         let Ok(command_pool) = vk_dev
             .create_command_pool(
@@ -362,19 +358,19 @@ fn insert_dmatex_into_gpu_images(
     #[expect(clippy::unwrap_used)]
     let mut imported = imported.0.lock().unwrap();
     let handles = imported.keys().copied().collect::<Vec<_>>();
-    for handle in handles {
+    for asset_id in handles {
         // filter out outdated dmatexs
-        if gpu_images.get(handle).is_none() {
-            imported.remove(&handle);
+        if gpu_images.get(asset_id).is_none() {
+            imported.remove(&asset_id);
             continue;
         }
-        if matches!(imported.get(&handle), Some(DmaImage::UnImported(_, _, _)))
-            && let Some(DmaImage::UnImported(dmabuf, on_drop, usage)) = imported.remove(&handle)
+        if matches!(imported.get(&asset_id), Some(DmaImage::UnImported(_, _, _)))
+            && let Some(DmaImage::UnImported(dmabuf, on_drop, usage)) = imported.remove(&asset_id)
         {
             match import_texture(&device, dmabuf, on_drop, usage) {
                 Ok(tex) => {
                     debug!("imported dmatex");
-                    imported.insert(handle.clone(), DmaImage::Imported(tex));
+                    imported.insert(asset_id, DmaImage::Imported(tex));
                 }
                 Err(err) => {
                     error!("failed to import dmatex: {err}");
@@ -382,12 +378,12 @@ fn insert_dmatex_into_gpu_images(
                 }
             }
         }
-        let Some(render_tex) = gpu_images.get_mut(handle) else {
+        let Some(render_tex) = gpu_images.get_mut(asset_id) else {
             warn!("invalid texture handle (unreachable)");
             continue;
         };
 
-        if let Some(DmaImage::Imported(tex)) = imported.get(&handle) {
+        if let Some(DmaImage::Imported(tex)) = imported.get(&asset_id) {
             trace!("setting texture view!");
             render_tex.texture_view = tex.texture_view.clone();
             render_tex.size = tex.texture.size();
@@ -648,7 +644,7 @@ pub fn import_texture(
         match disjoint {
             true => {
                 for (i, v) in buf.planes.into_iter().enumerate() {
-                    let fd = OwnedFd::from(v.dmabuf_fd);
+                    let fd = v.dmabuf_fd;
                     let aspect_flags = match i {
                         0 => vk::ImageAspectFlags::MEMORY_PLANE_0_EXT,
                         1 => vk::ImageAspectFlags::MEMORY_PLANE_1_EXT,
@@ -701,13 +697,12 @@ pub fn import_texture(
                 }
             }
             false => {
-                let fd = OwnedFd::from(
-                    buf.planes
-                        .into_iter()
-                        .next()
-                        .ok_or(ImportError::NoPlanes)?
-                        .dmabuf_fd,
-                );
+                let fd = buf
+                    .planes
+                    .into_iter()
+                    .next()
+                    .ok_or(ImportError::NoPlanes)?
+                    .dmabuf_fd;
                 let mut dedicated_req = MemoryDedicatedRequirements::default();
                 let mut mem_reqs = MemoryRequirements2::default().push_next(&mut dedicated_req);
                 let mem_req_info = vk::ImageMemoryRequirementsInfo2::default().image(image);

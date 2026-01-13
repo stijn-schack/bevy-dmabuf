@@ -9,6 +9,7 @@ use ash::vk::{
     self, CommandBufferBeginInfo, FormatFeatureFlags2, ImagePlaneMemoryRequirementsInfo,
     MemoryDedicatedRequirements, MemoryRequirements2, SubresourceLayout,
 };
+use bevy::render::RenderPlugin;
 use bevy::{
     app::Plugin,
     asset::{AssetId, Assets, Handle, RenderAssetUsages},
@@ -180,10 +181,11 @@ fn memory_barrier(
     queue_transfer_direction: ImageQueueTransfer,
 ) {
     unsafe {
+        #[allow(clippy::unwrap_used)] // Validation
         let dev = device
             .wgpu_device()
             .as_hal::<Vulkan>()
-            .expect("Expected wgpu runtime to be backed by Vulkan.");
+            .unwrap();
         let vk_dev = dev.raw_device();
         let Ok(command_pool) = vk_dev
             .create_command_pool(

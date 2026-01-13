@@ -1,13 +1,15 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
-use std::{
-    fmt::Debug,
-    os::fd::IntoRawFd as _,
-    sync::{Arc, Mutex},
+use crate::{
+    dmatex::Dmatex,
+    format_mapping::{
+        drm_fourcc_to_vk_format, get_drm_image_modifier_info, get_drm_modifiers, vk_format_to_srgb,
+        vulkan_to_wgpu,
+    },
 };
-
 use ash::vk::{
-    self, CommandBufferBeginInfo, FormatFeatureFlags2, ImagePlaneMemoryRequirementsInfo,
-    MemoryDedicatedRequirements, MemoryRequirements2, SubresourceLayout,
+    self, CommandBufferBeginInfo, DeviceMemory, FormatFeatureFlags2,
+    ImagePlaneMemoryRequirementsInfo, MemoryDedicatedRequirements, MemoryRequirements2,
+    SubresourceLayout,
 };
 use bevy::{
     app::Plugin,
@@ -32,18 +34,15 @@ use bevy::{
     utils::default,
 };
 use drm_fourcc::DrmFourcc;
+use std::{
+    fmt::Debug,
+    os::fd::IntoRawFd as _,
+    sync::{Arc, Mutex},
+};
 use thiserror::Error;
 use wgpu::{
-    hal::{vulkan::Api as Vulkan, MemoryFlags, TextureDescriptor}, TextureUsages, TextureUses,
+    hal::{api::Vulkan, vulkan::Device as VkDevice, MemoryFlags, TextureDescriptor}, TextureUsages, TextureUses,
     TextureViewDescriptor,
-};
-
-use crate::format_mapping::vulkan_to_wgpu;
-use crate::{
-    dmatex::Dmatex,
-    format_mapping::{
-        drm_fourcc_to_vk_format, get_drm_image_modifier_info, get_drm_modifiers, vk_format_to_srgb,
-    },
 };
 
 pub struct DmabufImportPlugin;
@@ -292,15 +291,6 @@ fn memory_barrier(
             return;
         }
 
-        // let fence = vk_dev
-        //     .create_fence(
-        //         &vk::FenceCreateInfo {
-        //             flags: vk::FenceCreateFlags::empty(),
-        //             ..Default::default()
-        //         },
-        //         None,
-        //     )
-        //     .unwrap();
         let mut timeline_info =
             vk::SemaphoreTypeCreateInfo::default().semaphore_type(vk::SemaphoreType::TIMELINE);
         let Ok(timeline_semaphore) = vk_dev
@@ -380,6 +370,9 @@ fn insert_dmatex_into_gpu_images(
         }
         let Some(render_tex) = gpu_images.get_mut(asset_id) else {
             warn!("invalid texture handle (unreachable)");
+            #[cfg(debug_assertions)]
+            unreachable!();
+            #[cfg(not(debug_assertions))]
             continue;
         };
 
@@ -485,9 +478,9 @@ impl ImportedTexture {
     }
 }
 
-#[tracing::instrument(level = "debug", skip(device, on_drop))]
+#[tracing::instrument(level = "debug", skip(render_device, on_drop))]
 pub fn import_texture(
-    device: &RenderDevice,
+    render_device: &RenderDevice,
     buf: Dmatex,
     on_drop: DropCallback,
     usage: DmatexUsage,
@@ -507,16 +500,16 @@ pub fn import_texture(
         .unwrap_or(vulkan_format);
     let wgpu_desc = get_imported_descriptor(&buf)?;
 
-    let dev = unsafe {
-        device
+    let vk_device = unsafe {
+        render_device
             .wgpu_device()
             .as_hal::<Vulkan>()
             .ok_or(ImportError::NotVulkan)?
     };
 
     let (_format_properties, drm_format_properties) = get_drm_modifiers(
-        dev.shared_instance().raw_instance(),
-        dev.raw_physical_device(),
+        vk_device.shared_instance().raw_instance(),
+        vk_device.raw_physical_device(),
         vulkan_format,
     );
 
@@ -525,7 +518,13 @@ pub fn import_texture(
         .find(|v| v.drm_format_modifier == buf.modifier)
         .ok_or(ImportError::ModifierInvalid)?;
 
-    let (image, mem) = {
+    let size = wgpu::Extent3d {
+        width: buf.res.x,
+        height: buf.res.y,
+        depth_or_array_layers: 1,
+    };
+
+    let (image, mems) = {
         let mut disjoint = false;
         for _plane in buf.planes.iter() {
             disjoint |= vk_drm_modifier
@@ -543,8 +542,8 @@ pub fn import_texture(
         };
 
         let _format_info = get_drm_image_modifier_info(
-            dev.shared_instance().raw_instance(),
-            dev.raw_physical_device(),
+            vk_device.shared_instance().raw_instance(),
+            vk_device.raw_physical_device(),
             vulkan_format,
             image_type,
             usage_flags,
@@ -604,15 +603,17 @@ pub fn import_texture(
             image_create_info = image_create_info.push_next(info);
         }
         let image = unsafe {
-            dev.raw_device()
+            vk_device
+                .raw_device()
                 .create_image(&image_create_info, None)
                 .map_err(ImportError::VulkanImageCreationFailed)?
         };
 
         let mem_properties = unsafe {
-            dev.shared_instance()
+            vk_device
+                .shared_instance()
                 .raw_instance()
-                .get_physical_device_memory_properties(dev.raw_physical_device())
+                .get_physical_device_memory_properties(vk_device.raw_physical_device())
         };
 
         let memory_types = &mem_properties.memory_types_as_slice();
@@ -631,7 +632,7 @@ pub fn import_texture(
                     u
                 }
             });
-        let index = memory_types
+        let memory_type_idx = memory_types
             .iter()
             .zip(0u32..)
             .find(|(t, _)| {
@@ -640,101 +641,14 @@ pub fn import_texture(
             })
             .ok_or(ImportError::NoValidMemoryTypes)?
             .1;
-        let mut plane_mems = Vec::with_capacity(4);
-        match disjoint {
-            true => {
-                for (i, v) in buf.planes.into_iter().enumerate() {
-                    let fd = v.dmabuf_fd;
-                    let aspect_flags = match i {
-                        0 => vk::ImageAspectFlags::MEMORY_PLANE_0_EXT,
-                        1 => vk::ImageAspectFlags::MEMORY_PLANE_1_EXT,
-                        2 => vk::ImageAspectFlags::MEMORY_PLANE_2_EXT,
-                        3 => vk::ImageAspectFlags::MEMORY_PLANE_3_EXT,
-                        _ => return Err(ImportError::IncorrectNumberOfPlanes),
-                    };
-                    let mut dedicated_req = MemoryDedicatedRequirements::default();
-                    let mut plane_req_info =
-                        ImagePlaneMemoryRequirementsInfo::default().plane_aspect(aspect_flags);
-                    let mem_req_info = vk::ImageMemoryRequirementsInfo2::default()
-                        .image(image)
-                        .push_next(&mut plane_req_info);
-                    let mut mem_reqs = MemoryRequirements2::default().push_next(&mut dedicated_req);
-                    unsafe {
-                        dev.raw_device()
-                            .get_image_memory_requirements2(&mem_req_info, &mut mem_reqs)
-                    };
-                    let needs_dedicated = dedicated_req.requires_dedicated_allocation != 0;
-                    let layout = unsafe {
-                        dev.raw_device().get_image_subresource_layout(
-                            image,
-                            vk::ImageSubresource::default().aspect_mask(aspect_flags),
-                        )
-                    };
 
-                    let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
-                        .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-                        .fd(fd.into_raw_fd());
+        let mut mems = if disjoint {
+            import_disjoint(buf, render_device, image, memory_type_idx)?
+        } else {
+            vec![import_non_disjoint(buf, render_device, image, memory_type_idx)?]
+        };
 
-                    let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
-                    let mut alloc_info = vk::MemoryAllocateInfo::default()
-                        .allocation_size(layout.size)
-                        .memory_type_index(index)
-                        .push_next(&mut external_fd_info);
-                    if needs_dedicated {
-                        alloc_info = alloc_info.push_next(&mut dedicated);
-                    }
-
-                    let mem = unsafe {
-                        dev.raw_device()
-                            .allocate_memory(&alloc_info, None)
-                            .inspect_err(|_| dev.raw_device().destroy_image(image, None))
-                            .map_err(ImportError::VulkanMemoryAllocFailed)?
-                    };
-                    plane_mems.push((
-                        mem,
-                        Some(vk::BindImagePlaneMemoryInfo::default().plane_aspect(aspect_flags)),
-                    ));
-                }
-            }
-            false => {
-                let fd = buf
-                    .planes
-                    .into_iter()
-                    .next()
-                    .ok_or(ImportError::NoPlanes)?
-                    .dmabuf_fd;
-                let mut dedicated_req = MemoryDedicatedRequirements::default();
-                let mut mem_reqs = MemoryRequirements2::default().push_next(&mut dedicated_req);
-                let mem_req_info = vk::ImageMemoryRequirementsInfo2::default().image(image);
-                unsafe {
-                    dev.raw_device()
-                        .get_image_memory_requirements2(&mem_req_info, &mut mem_reqs)
-                };
-                let size = mem_reqs.memory_requirements.size;
-
-                let needs_dedicated = dedicated_req.requires_dedicated_allocation != 0;
-
-                let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
-                    .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-                    .fd(fd.into_raw_fd());
-                let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
-                let mut alloc_info = vk::MemoryAllocateInfo::default()
-                    .allocation_size(size)
-                    .memory_type_index(index)
-                    .push_next(&mut external_fd_info);
-                if needs_dedicated {
-                    alloc_info = alloc_info.push_next(&mut dedicated);
-                }
-                let mem = unsafe {
-                    dev.raw_device()
-                        .allocate_memory(&alloc_info, None)
-                        .inspect_err(|_| dev.raw_device().destroy_image(image, None))
-                        .map_err(ImportError::VulkanMemoryAllocFailed)?
-                };
-                plane_mems.push((mem, None));
-            }
-        }
-        let bind_infos = plane_mems
+        let bind_infos = mems
             .iter_mut()
             .map(|(mem, info)| match info {
                 Some(info) => vk::BindImageMemoryInfo::default()
@@ -745,21 +659,18 @@ pub fn import_texture(
             })
             .collect::<Vec<_>>();
         unsafe {
-            dev.raw_device()
+            vk_device
+                .raw_device()
                 .bind_image_memory2(&bind_infos)
                 .map_err(ImportError::VulkanImageMemoryBindFailed)?;
         }
 
-        (image, plane_mems)
+        (image, mems)
     };
 
     let descriptor = TextureDescriptor {
         label: None,
-        size: wgpu::Extent3d {
-            width: buf.res.x,
-            height: buf.res.y,
-            depth_or_array_layers: 1,
-        },
+        size,
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -770,15 +681,15 @@ pub fn import_texture(
     };
 
     let texture = unsafe {
-        dev.texture_from_raw(
+        vk_device.texture_from_raw(
             image,
             &descriptor,
             Some({
-                let dev = device.clone();
+                let dev: RenderDevice = render_device.clone();
                 Box::new(move || {
                     let _on_drop = on_drop;
                     if let Some(dev) = dev.wgpu_device().as_hal::<Vulkan>() {
-                        for (mem, _) in mem {
+                        for (mem, _) in mems {
                             dev.raw_device().free_memory(mem, None);
                         }
                         dev.raw_device().destroy_image(image, None);
@@ -789,7 +700,7 @@ pub fn import_texture(
     };
 
     let wgpu_texture = unsafe {
-        device
+        render_device
             .wgpu_device()
             .create_texture_from_hal::<Vulkan>(texture, &wgpu_desc)
     };
@@ -810,4 +721,127 @@ pub fn import_texture(
         texture_view,
         _usage: usage,
     })
+}
+
+fn import_disjoint<'a>(
+    buf: Dmatex,
+    dev: &RenderDevice,
+    image: vk::Image,
+    memory_type_idx: u32,
+) -> Result<Vec<(DeviceMemory, Option<vk::BindImagePlaneMemoryInfo<'a>>)>, ImportError> {
+    let dev = unsafe {
+        dev.wgpu_device()
+            .as_hal::<Vulkan>()
+            .ok_or(ImportError::NotVulkan)?
+    };
+
+    let mut plane_mems = Vec::with_capacity(4);
+    for (i, v) in buf.planes.into_iter().enumerate() {
+        let fd = v.dmabuf_fd;
+        let aspect_flags = match i {
+            0 => vk::ImageAspectFlags::MEMORY_PLANE_0_EXT,
+            1 => vk::ImageAspectFlags::MEMORY_PLANE_1_EXT,
+            2 => vk::ImageAspectFlags::MEMORY_PLANE_2_EXT,
+            3 => vk::ImageAspectFlags::MEMORY_PLANE_3_EXT,
+            _ => return Err(ImportError::IncorrectNumberOfPlanes),
+        };
+
+        let mut dedicated_req = MemoryDedicatedRequirements::default();
+        let mut plane_req_info =
+            ImagePlaneMemoryRequirementsInfo::default().plane_aspect(aspect_flags);
+        let mem_req_info = vk::ImageMemoryRequirementsInfo2::default()
+            .image(image)
+            .push_next(&mut plane_req_info);
+        let mut mem_reqs = MemoryRequirements2::default().push_next(&mut dedicated_req);
+        unsafe {
+            dev.raw_device()
+                .get_image_memory_requirements2(&mem_req_info, &mut mem_reqs)
+        };
+        let needs_dedicated = dedicated_req.requires_dedicated_allocation != 0;
+        let layout = unsafe {
+            dev.raw_device().get_image_subresource_layout(
+                image,
+                vk::ImageSubresource::default().aspect_mask(aspect_flags),
+            )
+        };
+
+        let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
+            .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
+            .fd(fd.into_raw_fd());
+
+        let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
+        let mut alloc_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(layout.size)
+            .memory_type_index(memory_type_idx)
+            .push_next(&mut external_fd_info);
+        if needs_dedicated {
+            alloc_info = alloc_info.push_next(&mut dedicated);
+        }
+
+        let mem = allocate_image(image, &dev, &mut alloc_info)?;
+
+        plane_mems.push((
+            mem,
+            Some(vk::BindImagePlaneMemoryInfo::default().plane_aspect(aspect_flags)),
+        ));
+    }
+    Ok(plane_mems)
+}
+
+fn import_non_disjoint<'a>(
+    buf: Dmatex,
+    dev: &RenderDevice,
+    image: vk::Image,
+    memory_type_idx: u32,
+) -> Result<(DeviceMemory, Option<vk::BindImagePlaneMemoryInfo<'a>>), ImportError> {
+    let dev = unsafe {
+        dev.wgpu_device()
+            .as_hal::<Vulkan>()
+            .ok_or(ImportError::NotVulkan)?
+    };
+
+    let fd = buf
+        .planes
+        .into_iter()
+        .next()
+        .ok_or(ImportError::NoPlanes)?
+        .dmabuf_fd;
+    let mut dedicated_req = MemoryDedicatedRequirements::default();
+    let mut mem_reqs = MemoryRequirements2::default().push_next(&mut dedicated_req);
+    let mem_req_info = vk::ImageMemoryRequirementsInfo2::default().image(image);
+    unsafe {
+        dev.raw_device()
+            .get_image_memory_requirements2(&mem_req_info, &mut mem_reqs)
+    };
+    let size = mem_reqs.memory_requirements.size;
+
+    let needs_dedicated = dedicated_req.requires_dedicated_allocation != 0;
+
+    let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
+        .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
+        .fd(fd.into_raw_fd());
+    let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
+    let mut alloc_info = vk::MemoryAllocateInfo::default()
+        .allocation_size(size)
+        .memory_type_index(memory_type_idx)
+        .push_next(&mut external_fd_info);
+    if needs_dedicated {
+        alloc_info = alloc_info.push_next(&mut dedicated);
+    }
+    let mem = allocate_image(image, &dev, &mut alloc_info)?;
+    Ok((mem, None))
+}
+
+fn allocate_image(
+    image: vk::Image,
+    dev: &VkDevice,
+    alloc_info: &mut vk::MemoryAllocateInfo,
+) -> Result<DeviceMemory, ImportError> {
+    let mem = unsafe {
+        dev.raw_device()
+            .allocate_memory(alloc_info, None)
+            .inspect_err(|_| dev.raw_device().destroy_image(image, None))
+            .map_err(ImportError::VulkanMemoryAllocFailed)?
+    };
+    Ok(mem)
 }

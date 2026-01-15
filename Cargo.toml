@@ -13,10 +13,10 @@ ash = "0.38"
 drm-fourcc = "2.2"
 tracing = "0.1"
 thiserror = "2.0"
-wgpu = "26"
+wgpu = "*" # use bevy's wgpu version
 
 [dependencies.bevy]
-version = "0.17"
+version = "0.18"
 default-features = false
 features = [
     "bevy_asset",

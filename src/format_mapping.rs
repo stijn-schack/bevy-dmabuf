@@ -109,33 +109,6 @@ pub fn drm_fourcc_to_vk_format(drm_format: drm_fourcc::DrmFourcc) -> Option<vk::
     })
 }
 
-pub fn vk_format_to_drm_fourcc(vk_format: vk::Format) -> Option<drm_fourcc::DrmFourcc> {
-    use drm_fourcc::DrmFourcc as D;
-    use vk::Format as F;
-    Some(match vk_format {
-        F::A2B10G10R10_UNORM_PACK32 | F::A2B10G10R10_SINT_PACK32 => D::Abgr2101010,
-        F::A2R10G10B10_UNORM_PACK32 | F::A2R10G10B10_SINT_PACK32 => D::Argb2101010,
-        F::B8G8R8_UNORM | F::B8G8R8_SINT => D::Bgr888,
-        F::R8G8B8A8_UNORM | F::R8G8B8A8_SINT => D::Rgba8888,
-        F::R8G8B8_UNORM | F::R8G8B8_SINT => D::Rgb888,
-        F::B8G8R8A8_UNORM | F::B8G8R8A8_SINT => D::Bgra8888,
-        F::R16_UNORM | F::R16_SINT => D::R16,
-        F::R8_UNORM | F::R8_SINT => D::R8,
-        F::R16G16_UNORM | F::R16G16_SINT => D::Rg1616,
-        F::R8G8_UNORM | F::R8G8_SINT => D::Rg88,
-
-        F::A4B4G4R4_UNORM_PACK16 => D::Abgr4444,
-        F::A1R5G5B5_UNORM_PACK16 => D::Argb1555,
-        F::B5G6R5_UNORM_PACK16 => D::Bgr565,
-        F::B4G4R4A4_UNORM_PACK16 => D::Bgra4444,
-        F::B5G5R5A1_UNORM_PACK16 => D::Bgra5551,
-        F::R5G6B5_UNORM_PACK16 => D::Rgb565,
-        F::R4G4B4A4_UNORM_PACK16 => D::Rgba4444,
-        F::R5G5B5A1_UNORM_PACK16 => D::Rgba5551,
-        _ => return None,
-    })
-}
-
 pub fn vk_format_to_srgb(vk_format: vk::Format) -> Option<vk::Format> {
     use vk::Format as F;
     Some(match vk_format {

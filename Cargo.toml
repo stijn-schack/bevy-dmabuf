@@ -23,5 +23,30 @@ features = [
     "bevy_image",
     "bevy_log",
     "bevy_render",
-    "raw_vulkan_init"
+    "raw_vulkan_init",
 ]
+
+[dev-dependencies.bevy]
+version = "0.18"
+default-features = false
+features = [
+    "bevy_camera",
+    "bevy_pbr",
+    "bevy_window",
+    "bevy_winit",
+    "debug",
+    "free_camera",
+    "multi_threaded",
+    "png",
+    "tonemapping_luts",
+    "wayland",
+    "x11",
+    "zstd_rust",
+]
+
+[dev-dependencies]
+smithay = { version = "0.7", default-features = false, features = ["use_system_lib", "backend_gbm"] }
+
+
+[[example]]
+name = "dmabuf_import"

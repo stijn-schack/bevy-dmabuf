@@ -4,201 +4,23 @@ use crate::{
         drm_fourcc_to_vk_format, get_drm_image_modifier_info, get_drm_modifiers, vk_format_to_srgb,
         vulkan_to_wgpu,
     },
-    import::{
-        get_imported_descriptor, DmaImage, DmatexUsage, DropCallback, ImageQueueTransfer, ImportError,
-        ImportedDmatexs, ImportedTexture,
-    }
+    import::{render_world::{ImportError, ImportedTexture}, DmatexUsage},
 };
-use std::os::fd::IntoRawFd as _;
-
 use ash::vk::{
-    self, CommandBufferBeginInfo, DeviceMemory, FormatFeatureFlags2,
-    ImagePlaneMemoryRequirementsInfo, MemoryDedicatedRequirements, MemoryRequirements2,
-    SubresourceLayout,
+    self, DeviceMemory, FormatFeatureFlags2, ImagePlaneMemoryRequirementsInfo,
+    MemoryDedicatedRequirements, MemoryRequirements2, SubresourceLayout,
 };
-use bevy::render::{
-    render_resource::Texture,
-    renderer::RenderDevice,
-};
+use bevy::render::render_resource::Texture;
 use drm_fourcc::DrmFourcc;
-use tracing::{debug_span, error};
+use std::os::fd::IntoRawFd;
 use wgpu::{
-    hal::{api::Vulkan, vulkan::Device as VkDevice, MemoryFlags, TextureDescriptor}, TextureUses,
+    hal::{api::Vulkan, vulkan::Device as VkDevice, MemoryFlags, TextureDescriptor}, Extent3d, TextureUsages, TextureUses,
     TextureViewDescriptor,
 };
 
-pub fn memory_barrier(
-    device: &RenderDevice,
-    dmatexs: &ImportedDmatexs,
-    queue_transfer_direction: ImageQueueTransfer,
-) {
-    unsafe {
-        #[allow(clippy::unwrap_used)] // Validation
-        let dev = device.wgpu_device().as_hal::<Vulkan>().unwrap();
-        let vk_dev = dev.raw_device();
-        let Ok(command_pool) = vk_dev
-            .create_command_pool(
-                &vk::CommandPoolCreateInfo {
-                    flags: vk::CommandPoolCreateFlags::TRANSIENT,
-                    queue_family_index: dev.queue_family_index(),
-                    ..Default::default()
-                },
-                None,
-            )
-            .inspect_err(|e| error!("Unable to create command pool: {e}"))
-        else {
-            return;
-        };
-
-        let Ok(Some(buffer)) = dev
-            .raw_device()
-            .allocate_command_buffers(&vk::CommandBufferAllocateInfo {
-                command_pool,
-                level: vk::CommandBufferLevel::PRIMARY,
-                command_buffer_count: 1,
-                ..Default::default()
-            })
-            .inspect_err(|e| error!("Unable to allocate command buffer: {e}"))
-            .map(|v| v.into_iter().next())
-        else {
-            vk_dev.destroy_command_pool(command_pool, None);
-            return;
-        };
-        let Ok(texes) = dmatexs
-            .0
-            .lock()
-            .inspect_err(|e| error!("Unable to lock dmatexs: {e}"))
-        else {
-            vk_dev.destroy_command_pool(command_pool, None);
-            return;
-        };
-
-        if vk_dev
-            .begin_command_buffer(
-                buffer,
-                &CommandBufferBeginInfo {
-                    flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                    ..Default::default()
-                },
-            )
-            .inspect_err(|err| error!("failed to begin command buffer: {err}"))
-            .is_err()
-        {
-            vk_dev.destroy_command_pool(command_pool, None);
-            return;
-        }
-
-        let vk_submit_span = debug_span!("VK dmatex image acquire").entered();
-        for image in texes
-            .iter()
-            .filter_map(|v| match v.1 {
-                DmaImage::UnImported(_, _, _) => None,
-                DmaImage::Imported(imported_texture) => Some(imported_texture),
-            })
-            .filter_map(|imported| {
-                imported
-                    .texture
-                    .as_hal::<Vulkan>()
-                    .map(|vk_texture| vk_texture.raw_handle())
-            })
-        {
-            vk_dev.cmd_pipeline_barrier(
-                buffer,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[vk::ImageMemoryBarrier {
-                    src_access_mask: vk::AccessFlags::NONE,
-                    dst_access_mask: vk::AccessFlags::NONE,
-                    old_layout: vk::ImageLayout::GENERAL,
-                    new_layout: vk::ImageLayout::GENERAL,
-                    // TODO: might want to use vk::QUEUE_FAMILY_FOREIGN_EXT instead
-                    src_queue_family_index: match queue_transfer_direction {
-                        ImageQueueTransfer::Acquire => vk::QUEUE_FAMILY_EXTERNAL,
-                        ImageQueueTransfer::Release => dev.queue_family_index(),
-                    },
-                    dst_queue_family_index: match queue_transfer_direction {
-                        ImageQueueTransfer::Acquire => dev.queue_family_index(),
-                        ImageQueueTransfer::Release => vk::QUEUE_FAMILY_EXTERNAL,
-                    },
-                    image,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                    ..Default::default()
-                }],
-            );
-        }
-        drop(vk_submit_span);
-        if vk_dev
-            .end_command_buffer(buffer)
-            .inspect_err(|err| error!("failed to end command buffer: {err}"))
-            .is_err()
-        {
-            vk_dev.destroy_command_pool(command_pool, None);
-            return;
-        }
-
-        let mut timeline_info =
-            vk::SemaphoreTypeCreateInfo::default().semaphore_type(vk::SemaphoreType::TIMELINE);
-        let Ok(timeline_semaphore) = vk_dev
-            .create_semaphore(
-                &vk::SemaphoreCreateInfo::default().push_next(&mut timeline_info),
-                None,
-            )
-            .inspect_err(|err| error!("failed to create timeline semaphore: {err}"))
-        else {
-            vk_dev.destroy_command_pool(command_pool, None);
-            return;
-        };
-        let mut timeline_info =
-            vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(&[2]);
-        if vk_dev
-            .queue_submit(
-                dev.raw_queue(),
-                &[vk::SubmitInfo::default()
-                    .command_buffers(&[buffer])
-                    .signal_semaphores(&[timeline_semaphore])
-                    .push_next(&mut timeline_info)],
-                vk::Fence::null(),
-            )
-            .inspect_err(|err| error!("failed to submit queue: {err}"))
-            .is_err()
-        {
-            vk_dev.destroy_command_pool(command_pool, None);
-            vk_dev.destroy_semaphore(timeline_semaphore, None);
-            return;
-        };
-        if vk_dev
-            .wait_semaphores(
-                &vk::SemaphoreWaitInfo::default()
-                    .values(&[2])
-                    .semaphores(&[timeline_semaphore]),
-                u64::MAX,
-            )
-            .inspect_err(|err| error!("failed to wait for semaphore: {err}"))
-            .is_err()
-        {
-            vk_dev.destroy_command_pool(command_pool, None);
-            vk_dev.destroy_semaphore(timeline_semaphore, None);
-            return;
-        };
-        vk_dev.destroy_semaphore(timeline_semaphore, None);
-        vk_dev.destroy_command_pool(command_pool, None);
-    };
-}
-
-#[tracing::instrument(level = "debug", skip(render_device, on_drop))]
 pub fn import_texture(
-    render_device: &RenderDevice,
+    render_device: &wgpu::Device,
     buf: Dmatex,
-    on_drop: DropCallback,
     usage: DmatexUsage,
 ) -> Result<ImportedTexture, ImportError> {
     if buf.planes.is_empty() {
@@ -218,7 +40,6 @@ pub fn import_texture(
 
     let vk_device = unsafe {
         render_device
-            .wgpu_device()
             .as_hal::<Vulkan>()
             .ok_or(ImportError::NotVulkan)?
     };
@@ -234,7 +55,7 @@ pub fn import_texture(
         .find(|v| v.drm_format_modifier == buf.modifier)
         .ok_or(ImportError::ModifierInvalid)?;
 
-    let size = wgpu::Extent3d {
+    let size = Extent3d {
         width: buf.res.x,
         height: buf.res.y,
         depth_or_array_layers: 1,
@@ -406,10 +227,9 @@ pub fn import_texture(
             image,
             &descriptor,
             Some({
-                let dev: RenderDevice = render_device.clone();
+                let dev: wgpu::Device = render_device.clone();
                 Box::new(move || {
-                    let _on_drop = on_drop;
-                    if let Some(dev) = dev.wgpu_device().as_hal::<Vulkan>() {
+                    if let Some(dev) = dev.as_hal::<Vulkan>() {
                         for (mem, _) in mems {
                             dev.raw_device().free_memory(mem, None);
                         }
@@ -420,11 +240,8 @@ pub fn import_texture(
         )
     };
 
-    let wgpu_texture = unsafe {
-        render_device
-            .wgpu_device()
-            .create_texture_from_hal::<Vulkan>(texture, &wgpu_desc)
-    };
+    let wgpu_texture =
+        unsafe { render_device.create_texture_from_hal::<Vulkan>(texture, &wgpu_desc) };
     let texture = Texture::from(wgpu_texture);
     let texture_view = texture.create_view(&TextureViewDescriptor {
         label: None,
@@ -446,19 +263,15 @@ pub fn import_texture(
 
 fn import_disjoint<'a>(
     buf: Dmatex,
-    dev: &RenderDevice,
+    dev: &wgpu::Device,
     image: vk::Image,
     memory_type_idx: u32,
 ) -> Result<Vec<(DeviceMemory, Option<vk::BindImagePlaneMemoryInfo<'a>>)>, ImportError> {
-    let dev = unsafe {
-        dev.wgpu_device()
-            .as_hal::<Vulkan>()
-            .ok_or(ImportError::NotVulkan)?
-    };
+    let dev = unsafe { dev.as_hal::<Vulkan>().ok_or(ImportError::NotVulkan)? };
 
     let mut plane_mems = Vec::with_capacity(4);
     for (i, v) in buf.planes.into_iter().enumerate() {
-        let fd = v.dmabuf_fd;
+        let fd = v.dmabuf_fd.into_raw_fd();
         let aspect_flags = match i {
             0 => vk::ImageAspectFlags::MEMORY_PLANE_0_EXT,
             1 => vk::ImageAspectFlags::MEMORY_PLANE_1_EXT,
@@ -488,7 +301,7 @@ fn import_disjoint<'a>(
 
         let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
             .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-            .fd(fd.into_raw_fd());
+            .fd(fd);
 
         let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
         let mut alloc_info = vk::MemoryAllocateInfo::default()
@@ -511,22 +324,19 @@ fn import_disjoint<'a>(
 
 fn import_non_disjoint<'a>(
     buf: Dmatex,
-    dev: &RenderDevice,
+    dev: &wgpu::Device,
     image: vk::Image,
     memory_type_idx: u32,
 ) -> Result<(DeviceMemory, Option<vk::BindImagePlaneMemoryInfo<'a>>), ImportError> {
-    let dev = unsafe {
-        dev.wgpu_device()
-            .as_hal::<Vulkan>()
-            .ok_or(ImportError::NotVulkan)?
-    };
+    let dev = unsafe { dev.as_hal::<Vulkan>().ok_or(ImportError::NotVulkan)? };
 
     let fd = buf
         .planes
         .into_iter()
         .next()
         .ok_or(ImportError::NoPlanes)?
-        .dmabuf_fd;
+        .dmabuf_fd
+        .into_raw_fd();
     let mut dedicated_req = MemoryDedicatedRequirements::default();
     let mut mem_reqs = MemoryRequirements2::default().push_next(&mut dedicated_req);
     let mem_req_info = vk::ImageMemoryRequirementsInfo2::default().image(image);
@@ -540,7 +350,7 @@ fn import_non_disjoint<'a>(
 
     let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
         .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-        .fd(fd.into_raw_fd());
+        .fd(fd);
     let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
     let mut alloc_info = vk::MemoryAllocateInfo::default()
         .allocation_size(size)
@@ -565,4 +375,33 @@ fn allocate_image(
             .map_err(ImportError::VulkanMemoryAllocFailed)?
     };
     Ok(mem)
+}
+
+fn get_imported_descriptor(buf: &Dmatex) -> Result<wgpu::TextureDescriptor<'static>, ImportError> {
+    let vulkan_format = drm_fourcc_to_vk_format(
+        DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
+    )
+        .ok_or(ImportError::VulkanIncompatibleFormat)?;
+    let vulkan_format = buf
+        .srgb
+        .then(|| vk_format_to_srgb(vulkan_format))
+        .flatten()
+        .unwrap_or(vulkan_format);
+    Ok(wgpu::TextureDescriptor {
+        label: None,
+        size: Extent3d {
+            width: buf.res.x,
+            height: buf.res.y,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: vulkan_to_wgpu(vulkan_format).ok_or(ImportError::WgpuIncompatibleFormat)?,
+        usage: TextureUsages::RENDER_ATTACHMENT
+            | TextureUsages::TEXTURE_BINDING
+            | TextureUsages::COPY_SRC
+            | TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
 }

@@ -1,7 +1,7 @@
-pub mod wgpu_init;
-// pub mod export;
+#[cfg(target_os = "linux")]
 pub mod dmatex;
 pub mod format_mapping;
 pub mod import;
+pub mod wgpu_init;
 
 pub use wgpu_init::required_device_extensions;

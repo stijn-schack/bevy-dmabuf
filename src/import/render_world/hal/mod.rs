@@ -20,7 +20,7 @@ pub fn import_dmabuf_as_texture(
 
     let vk_format = choose_vk_format(&dma)?;
     let wgpu_format = vulkan_to_wgpu(vk_format).ok_or(ImportError::WgpuIncompatibleFormat)?;
-    let wgpu_desc = wgpu_texture_desc(&dma, wgpu_format);
+    let wgpu_desc = wgpu_texture_desc(&dma, wgpu_format, usage);
 
     ensure_modifier_supported(&vk_device, vk_format, dma.format.modifier)?;
 
@@ -383,8 +383,14 @@ fn hal_texture_desc(
 fn wgpu_texture_desc(
     dma: &Dmatex,
     format: wgpu::TextureFormat,
+    usage: DmatexUsage,
 ) -> wgpu::TextureDescriptor<'static> {
     use wgpu::{Extent3d, TextureDimension, TextureUsages};
+
+    let usage = match usage {
+        DmatexUsage::Sampling => TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC,
+        DmatexUsage::RenderTarget => TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST,
+    };
 
     wgpu::TextureDescriptor {
         label: None,
@@ -397,10 +403,7 @@ fn wgpu_texture_desc(
         sample_count: 1,
         dimension: TextureDimension::D2,
         format,
-        usage: TextureUsages::TEXTURE_BINDING
-            | TextureUsages::RENDER_ATTACHMENT
-            | TextureUsages::COPY_SRC
-            | TextureUsages::COPY_DST,
+        usage,
         view_formats: &[],
     }
 }

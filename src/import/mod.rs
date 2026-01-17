@@ -59,9 +59,10 @@ pub enum ExternalImageCreationData {
     Dmabuf { dma: Dmatex, usage: DmatexUsage },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum DmatexUsage {
     Sampling,
+    RenderTarget,
 }
 
 #[derive(Resource, Default, Deref, DerefMut)]

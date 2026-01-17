@@ -1,4 +1,4 @@
-use super::{DmatexUsage, ExternalImage, ExternalImageCreationData};
+use super::{ExternalImage, ExternalImageCreationData};
 use ash::vk;
 use bevy::platform::collections::HashMap;
 use bevy::{
@@ -17,7 +17,6 @@ use bevy::{
 use thiserror::Error;
 
 pub mod hal;
-
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum GpuExternalImage {
@@ -67,7 +66,7 @@ impl RenderAsset for GpuExternalImage {
 
         let ExternalImageCreationData::Dmabuf { dma, usage } = source_asset.creation_data.unwrap();
         debug!("Importing external texture into render context");
-        let import_result = hal::import_texture(render_device.wgpu_device(), dma, usage);
+        let import_result = hal::import_dmabuf_as_texture(render_device.wgpu_device(), dma, usage);
         let gpu_ext_img = match import_result {
             Ok(img) => {
                 let texture_format = img.texture.format();
@@ -136,7 +135,6 @@ impl RenderAsset for GpuExternalImage {
 pub struct ImportedTexture {
     texture: Texture,
     texture_view: TextureView,
-    _usage: DmatexUsage,
 }
 
 #[derive(Resource, Debug, Default, Deref, DerefMut)]

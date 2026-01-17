@@ -1,3 +1,4 @@
+use drm_fourcc::DrmFormat;
 use std::os::fd::OwnedFd;
 
 /// Dmabuf Backed Texture
@@ -5,8 +6,7 @@ use std::os::fd::OwnedFd;
 pub struct Dmatex {
     pub planes: Vec<DmatexPlane>,
     pub res: Resolution,
-    pub format: u32,
-    pub modifier: u64,
+    pub format: DrmFormat,
     /// if the format has an srgb version, use that
     pub srgb: bool,
 }

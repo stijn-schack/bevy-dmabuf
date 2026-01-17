@@ -102,8 +102,7 @@ impl ExternalImageSource {
             dma: Dmatex {
                 planes,
                 res,
-                format: dma.format().code as u32,
-                modifier: dma.format().modifier.into(),
+                format: dma.format(),
                 srgb: image.texture_descriptor.format.is_srgb(),
             },
             usage: DmatexUsage::Sampling,

@@ -1,26 +1,38 @@
-use super::{ExternalImage, ExternalImageCreationData};
+use super::{ExternalImage, ExternalImageCreationData, ExternalImageUsage, ExternalRenderTarget};
 use ash::vk;
-use bevy::platform::collections::HashMap;
+use bevy::camera::RenderTarget;
+use bevy::render::MainWorld;
 use bevy::{
     asset::{AssetId, RenderAssetUsages},
-    ecs::system::lifetimeless::SResMut,
-    ecs::system::{lifetimeless::SRes, SystemParamItem},
-    log::debug,
+    camera::ManualTextureViewHandle,
+    ecs::{
+        system::lifetimeless::SResMut,
+        system::{lifetimeless::SRes, SystemParamItem},
+    },
+    platform::collections::HashMap,
     prelude::*,
     render::{
         render_asset::{AssetExtractionError, PrepareAssetError, RenderAsset, RenderAssets},
         render_resource::{Texture, TextureView},
         renderer::RenderDevice,
-        texture::{DefaultImageSampler, GpuImage},
+        texture::{DefaultImageSampler, GpuImage, ManualTextureView},
     },
 };
 use thiserror::Error;
 
 pub mod hal;
+
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum GpuExternalImage {
-    Imported(GpuImage),
+    Sampling {
+        image_id: AssetId<Image>,
+        gpu_image: GpuImage,
+    },
+    RenderTarget {
+        handle: ManualTextureViewHandle,
+        texture_view: ManualTextureView,
+    },
     Invalid(ImportError),
 }
 
@@ -31,6 +43,7 @@ impl RenderAsset for GpuExternalImage {
         SRes<DefaultImageSampler>,
         SResMut<RenderAssets<GpuImage>>,
         SResMut<AssetIdCache>,
+        SResMut<PendingExternalRenderTargets>,
     );
 
     fn asset_usage(_: &Self::SourceAsset) -> RenderAssetUsages {
@@ -57,40 +70,70 @@ impl RenderAsset for GpuExternalImage {
             "External images have immutable descriptions. Do not attempt to change the internals representations directly. If a new import is wanted, simply add another ExternalImage asset."
         );
 
-        debug!(
-            "Trying to prepare render asset for {} {}",
-            asset_id, source_asset.image_id
-        );
+        debug!("Trying to prepare render asset {asset_id}");
 
-        let (render_device, default_sampler, gpu_images, asset_ids) = params;
+        let (render_device, default_sampler, gpu_images, asset_ids, pending_render_targets) = params;
 
-        let ExternalImageCreationData::Dmabuf { dma, usage } = source_asset.creation_data.unwrap();
+        let ExternalImageCreationData::Dmabuf { dma } = source_asset.creation_data.unwrap();
         debug!("Importing external texture into render context");
-        let import_result = hal::import_dmabuf_as_texture(render_device.wgpu_device(), dma, usage);
+        let import_result =
+            hal::import_dmabuf_as_texture(render_device.wgpu_device(), dma, source_asset.usage);
         let gpu_ext_img = match import_result {
-            Ok(img) => {
-                let texture_format = img.texture.format();
-                let size = img.texture.size();
-                let mips = img.texture.mip_level_count();
-                Ok(Self::Imported(GpuImage {
-                    texture: img.texture,
-                    texture_view: img.texture_view,
-                    texture_format,
-                    texture_view_format: None,
-                    sampler: (***default_sampler).clone(),
-                    size,
-                    mip_level_count: mips,
-                    had_data: false,
-                }))
-            }
+            Ok(imported) => match source_asset.usage {
+                ExternalImageUsage::Sampling(image_id) => {
+                    let texture_format = imported.texture.format();
+                    let size = imported.texture.size();
+                    let mips = imported.texture.mip_level_count();
+                    Ok(Self::Sampling {
+                        image_id,
+                        gpu_image: GpuImage {
+                            texture: imported.texture,
+                            texture_view: imported.texture_view,
+                            texture_format,
+                            texture_view_format: None,
+                            sampler: (***default_sampler).clone(),
+                            size,
+                            mip_level_count: mips,
+                            had_data: false,
+                        },
+                    })
+                }
+                ExternalImageUsage::RenderTarget(handle) => {
+                    let extent_3d = imported.texture.size();
+                    Ok(Self::RenderTarget {
+                        handle,
+                        texture_view: ManualTextureView {
+                            texture_view: imported.texture_view,
+                            size: uvec2(extent_3d.width, extent_3d.height),
+                            view_format: imported.texture.format(),
+                        },
+                    })
+                }
+            },
             Err(err) => Ok(Self::Invalid(err)),
         }?;
 
         match &gpu_ext_img {
-            GpuExternalImage::Imported(imported_gpu_img) => {
-                debug!("GpuImage successfully imported for {}", asset_id);
-                gpu_images.insert(source_asset.image_id, imported_gpu_img.clone());
-                asset_ids.insert(asset_id, source_asset.image_id);
+            GpuExternalImage::Sampling {
+                image_id,
+                gpu_image,
+            } => {
+                debug!(
+                    "GpuImage successfully imported for {} backed by image {}",
+                    asset_id, image_id
+                );
+                gpu_images.insert(*image_id, gpu_image.clone());
+                asset_ids.insert(asset_id, *image_id);
+            }
+            GpuExternalImage::RenderTarget {
+                handle,
+                texture_view,
+            } => {
+                debug!(
+                    "RenderTarget successfully imported for {} backed by texture view handle {:?}",
+                    asset_id, handle
+                );
+                pending_render_targets.insert(*handle, texture_view.clone());
             }
             GpuExternalImage::Invalid(err) => {
                 error!("Failed to import external image {}: {}", asset_id, err)
@@ -104,9 +147,11 @@ impl RenderAsset for GpuExternalImage {
         source_asset: AssetId<Self::SourceAsset>,
         param: &mut SystemParamItem<Self::Param>,
     ) {
-        let (.., gpu_images, asset_ids) = param;
+        let (_render_device, _default_sampler, gpu_images, asset_ids, _texture_views) = param;
+
         if let Some(img_id) = asset_ids.get(&source_asset).copied() {
             gpu_images.remove(img_id);
+            asset_ids.remove(&source_asset);
             debug!("Removed GpuImage for {}", source_asset)
         }
     }
@@ -125,10 +170,35 @@ impl RenderAsset for GpuExternalImage {
 
             Ok(ExternalImage {
                 creation_data: Some(creation_data),
-                image_id: source.image_id,
+                usage: source.usage,
             })
         }
     }
+}
+
+pub(super) fn sync_render_targets(
+    mut main_world: ResMut<MainWorld>,
+    mut pending: ResMut<PendingExternalRenderTargets>,
+    mut cache: Local<Vec<(Entity, ManualTextureViewHandle, ManualTextureView)>>,
+) {
+    let mut empty_render_targets = main_world.query::<(Entity, &ExternalRenderTarget)>();
+    for (entity, target) in empty_render_targets.iter(&main_world) {
+        if let Some(texture_view) = pending.remove(&target.view_handle) {
+            trace!("Preparing RenderTarget::ManualTextureView({:?}) insertion for {}", target.view_handle, entity);
+            cache.push((entity, target.view_handle, texture_view));
+        }
+    }
+
+    main_world.resource_scope::<ManualTextureViews, ()>(|main_world, mut texture_views| {
+        for (entity, handle, texture_view) in cache.drain(..) {
+            texture_views.insert(handle, texture_view);
+            let render_target = RenderTarget::TextureView(handle);
+            debug!("Inserting {:?} for entity {}", &render_target, entity);
+            main_world.entity_mut(entity).insert(render_target);
+        }
+    });
+
+    cache.clear();
 }
 
 #[derive(Debug)]
@@ -147,7 +217,7 @@ impl Clone for ExternalImage {
     /// This is a workaround to ensure no data is actually cloned, while still adhering to the trait bounds.
     fn clone(&self) -> Self {
         #[cfg(debug_assertions)]
-        unimplemented!(
+        unreachable!(
             "Clone implementation needed to satisfy RenderAsset trait bounds. However, ExternalImage should never be cloned."
         );
         #[cfg(not(debug_assertions))]
@@ -156,6 +226,9 @@ impl Clone for ExternalImage {
         }
     }
 }
+
+#[derive(Resource, Default, Debug, Deref, DerefMut)]
+pub(crate) struct PendingExternalRenderTargets(HashMap<ManualTextureViewHandle, ManualTextureView>);
 
 #[derive(Error, Debug)]
 pub enum ImportError {

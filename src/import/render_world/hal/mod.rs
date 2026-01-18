@@ -1,4 +1,4 @@
-use crate::import::DmatexUsage;
+use crate::import::ExternalImageUsage;
 use crate::{
     dmatex::{Dmatex, DmatexPlane},
     format_mapping::vulkan_to_wgpu,
@@ -14,7 +14,7 @@ mod formats;
 pub fn import_dmabuf_as_texture(
     device: &wgpu::Device,
     dma: Dmatex,
-    usage: DmatexUsage,
+    usage: ExternalImageUsage,
 ) -> Result<ImportedTexture, ImportError> {
     let vk_device = unsafe { device.as_hal::<Vulkan>().ok_or(ImportError::NotVulkan) }?;
 
@@ -353,14 +353,16 @@ fn bind_image_memory(
 fn hal_texture_desc(
     dma: &Dmatex,
     format: wgpu::TextureFormat,
-    usage: DmatexUsage,
+    usage: ExternalImageUsage,
 ) -> wgpu::hal::TextureDescriptor<'static> {
     use wgpu::hal::MemoryFlags;
     use wgpu::{Extent3d, TextureDimension, TextureUses};
 
     let usage = match usage {
-        DmatexUsage::Sampling => TextureUses::RESOURCE | TextureUses::COPY_SRC,
-        DmatexUsage::RenderTarget => TextureUses::COLOR_TARGET | TextureUses::COPY_DST,
+        ExternalImageUsage::Sampling { .. } => TextureUses::RESOURCE | TextureUses::COPY_SRC,
+        ExternalImageUsage::RenderTarget { .. } => {
+            TextureUses::COLOR_TARGET | TextureUses::COPY_DST
+        }
     };
 
     wgpu::hal::TextureDescriptor {
@@ -383,13 +385,17 @@ fn hal_texture_desc(
 fn wgpu_texture_desc(
     dma: &Dmatex,
     format: wgpu::TextureFormat,
-    usage: DmatexUsage,
+    usage: ExternalImageUsage,
 ) -> wgpu::TextureDescriptor<'static> {
     use wgpu::{Extent3d, TextureDimension, TextureUsages};
 
     let usage = match usage {
-        DmatexUsage::Sampling => TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC,
-        DmatexUsage::RenderTarget => TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST,
+        ExternalImageUsage::Sampling { .. } => {
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC
+        }
+        ExternalImageUsage::RenderTarget { .. } => {
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST
+        }
     };
 
     wgpu::TextureDescriptor {

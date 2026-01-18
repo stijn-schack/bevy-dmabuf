@@ -45,6 +45,7 @@ features = [
 
 [dev-dependencies]
 smithay = { version = "0.7", default-features = false, features = ["use_system_lib", "backend_gbm"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 
 [[example]]

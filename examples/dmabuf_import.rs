@@ -1,15 +1,9 @@
-use crate::common::ExternalImageSource;
 use bevy::{
-    asset::embedded_asset,
-    camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
-    log::LogPlugin,
-    prelude::*,
+    asset::embedded_asset, camera_controller::free_camera::FreeCameraPlugin, prelude::*,
     time::common_conditions::on_timer,
 };
-use bevy_dmabuf::{
-    import::{DmabufImportPlugin, ExternalImageAssetLoader},
-    wgpu_init::add_dmabuf_init_plugin,
-};
+use bevy_dmabuf::import::ExternalImageAssetLoader;
+use common::*;
 use std::time::Duration;
 
 mod common;
@@ -17,26 +11,16 @@ mod common;
 fn main() -> AppExit {
     let mut app = App::new();
     app.add_plugins((
-        add_dmabuf_init_plugin(DefaultPlugins)
-            .set(LogPlugin {
-                filter: "info,bevy_dmabuf=trace".to_string(),
-                ..default()
-            })
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Dmabuf import example".to_string(),
-                    ..default()
-                }),
-                ..default()
-            }),
+        ExamplePlugins {
+            window_title: "Dmabuf import example",
+            ..default()
+        },
         FreeCameraPlugin,
-        DmabufImportPlugin,
     ));
 
     embedded_asset!(app, "examples/", "test_img.png");
 
-    app.insert_resource(ExternalImageSource::new())
-        .add_systems(Startup, load_test_image)
+    app.add_systems(Startup, load_test_image)
         .add_systems(PostStartup, spawn_base_scene)
         .add_systems(
             First,
@@ -52,32 +36,6 @@ fn main() -> AppExit {
         .add_observer(init_external_image_entity);
 
     app.run()
-}
-
-fn spawn_base_scene(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    info!("Spawning base scene");
-    // camera
-    let camera_transform = Transform::from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3::ZERO, Vec3::Y);
-    commands.spawn((
-        Camera3d::default(),
-        camera_transform,
-        FreeCamera { ..default() },
-    ));
-
-    commands.spawn((
-        Mesh3d(meshes.add(Circle::new(4.0))),
-        MeshMaterial3d(materials.add(StandardMaterial::default())),
-        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-    ));
-
-    let light_transform = Transform::from_translation(camera_transform.back().as_vec3() * 20_000.0)
-        .looking_at(Vec3::ZERO, Vec3::Y);
-    commands.spawn((DirectionalLight::default(), light_transform));
-    info!("Base scene spawned");
 }
 
 fn spawn_raw_img_entity(
@@ -123,7 +81,7 @@ fn init_external_image_entity(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mut material = StandardMaterial::from(event.0.clone());
+    let mut material = StandardMaterial::from(event.image_handle.clone());
     material.cull_mode = None;
     material.unlit = true;
 
@@ -135,24 +93,30 @@ fn init_external_image_entity(
         ))
         .id();
 
-    commands.insert_resource(TestEntity(entity));
+    commands.insert_resource(TestEntity {
+        entity,
+        buffer_id: event.buffer_id,
+    });
 }
 
 fn recreate_external_image(
     test_entity: Option<Res<TestEntity>>,
     test_img: Res<TestImg>,
     mut commands: Commands,
-    mut ext_img_src: ResMut<ExternalImageSource>,
+    mut ext_img_src: ResMut<ExternalBufferSource>,
     mut external_image_loader: ExternalImageAssetLoader,
 ) {
-    if let Some(entity) = test_entity {
-        commands.entity(**entity).despawn();
+    if let Some(test_entity) = test_entity {
+        commands.entity(test_entity.entity).despawn();
+        ext_img_src.remove(test_entity.buffer_id);
         commands.remove_resource::<TestEntity>()
     } else {
-        let handle = external_image_loader
-            .load(ext_img_src.create_buffer(&test_img))
-            .unwrap();
-        commands.trigger(ExternalImageReadyEvent(handle))
+        let (buffer_id, creation_data) = ext_img_src.create_buffer_from_image(&test_img);
+        let image_handle = external_image_loader.load_texture(creation_data);
+        commands.trigger(ExternalImageReadyEvent {
+            image_handle,
+            buffer_id,
+        })
     }
 }
 
@@ -162,8 +126,14 @@ struct TestImgHandle(Handle<Image>);
 #[derive(Resource, Deref, DerefMut)]
 struct TestImg(Image);
 
-#[derive(Resource, Deref, DerefMut)]
-struct TestEntity(Entity);
+#[derive(Resource)]
+struct TestEntity {
+    entity: Entity,
+    buffer_id: BufferId,
+}
 
 #[derive(Event, Debug)]
-struct ExternalImageReadyEvent(Handle<Image>);
+struct ExternalImageReadyEvent {
+    image_handle: Handle<Image>,
+    buffer_id: BufferId,
+}

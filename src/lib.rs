@@ -1,6 +1,5 @@
 #[cfg(target_os = "linux")]
 pub mod dmatex;
-pub mod format_mapping;
 pub mod import;
 pub mod wgpu_init;
 

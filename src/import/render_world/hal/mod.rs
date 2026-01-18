@@ -1,13 +1,16 @@
-use crate::import::ExternalImageUsage;
 use crate::{
     dmatex::{Dmatex, DmatexPlane},
-    format_mapping::vulkan_to_wgpu,
-    import::render_world::{ImportError, ImportedTexture},
+    import::{
+        render_world::{ImportError, ImportedTexture},
+        ExternalImageUsage,
+    },
 };
 use ash::vk;
 use drm_fourcc::DrmModifier;
 use std::os::fd::IntoRawFd;
 use wgpu::hal::{api::Vulkan, vulkan::Device as VkDevice};
+
+use formats::vulkan_to_wgpu;
 
 mod formats;
 

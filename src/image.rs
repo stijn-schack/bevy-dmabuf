@@ -12,7 +12,7 @@ impl Plugin for ExternalImagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ExternalBufferImageTable>().add_systems(
             PostUpdate,
-            remove_external_buffer_when_image_handle_dropped.after(AssetEventSystems),
+            sync_external_buffer_to_image_handle.after(AssetEventSystems),
         );
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
@@ -61,19 +61,22 @@ impl<'w> ExternalBufferAssetLoader<'w> {
 #[derive(Resource, Default, Deref, DerefMut)]
 struct ExternalBufferImageTable(HashMap<AssetId<Image>, Handle<ExternalBuffer>>);
 
-fn remove_external_buffer_when_image_handle_dropped(
+fn sync_external_buffer_to_image_handle(
     mut image_events: MessageReader<AssetEvent<Image>>,
     mut image_table: ResMut<ExternalBufferImageTable>,
 ) {
     for event in image_events.read() {
-        if let AssetEvent::Unused { id } = event
-            && let Some(handle) = image_table.remove(id)
-        {
-            debug!(
-                "Removed entry from ExternalBufferImageTable: ({}, {})",
-                id,
-                handle.id()
-            );
+        match event {
+            AssetEvent::Unused { id } | AssetEvent::Added { id } => {
+                if let Some(handle) = image_table.remove(id) {
+                    debug!(
+                        "Removed entry from ExternalBufferImageTable: ({}, {})",
+                        id,
+                        handle.id()
+                    );
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -99,9 +102,8 @@ pub(crate) mod render_world {
             usage,
         } = event.deref();
 
-        let image_id = match usage {
-            ExternalBufferUsage::Sampling(image_id) => *image_id,
-            _ => return,
+        let ExternalBufferUsage::Sampling(image_id) = usage else {
+            return;
         };
 
         let texture_format = texture.format();
@@ -120,7 +122,7 @@ pub(crate) mod render_world {
             had_data: false,
         };
 
-        gpu_images.insert(image_id, gpu_image);
+        gpu_images.insert(*image_id, gpu_image);
 
         debug!(
             "Set GpuImage for {}, backed by external buffer {}",

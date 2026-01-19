@@ -11,8 +11,8 @@ use bevy::{
         renderer::RenderDevice,
     },
 };
-use core::any::type_name;
 use thiserror::Error;
+
 mod hal;
 
 #[derive(Debug)]
@@ -72,12 +72,12 @@ impl RenderAsset for GpuExternalBuffer {
             "External images have immutable descriptions. Do not attempt to change the internals representations directly. If a new import is wanted, simply add another ExternalImage asset."
         );
 
-        debug!("Trying to prepare render asset {asset_id}");
+        trace!("Trying to prepare render asset {asset_id}");
 
         let (render_device, commands) = params;
 
         let ExternalBufferCreationData::Dmabuf { dma } = source_asset.creation_data.unwrap();
-        debug!("Importing external texture into render context");
+
         let import_result =
             hal::import_dmabuf_as_texture(render_device.wgpu_device(), dma, source_asset.usage);
 

@@ -2,7 +2,7 @@ use bevy::{
     camera_controller::free_camera::FreeCameraPlugin, input::common_conditions::input_just_pressed,
     prelude::*,
 };
-use bevy_dmabuf::import::ExternalImageAssetLoader;
+use bevy_dmabuf::import::ExternalBufferAssetLoader;
 use common::*;
 mod common;
 
@@ -51,7 +51,7 @@ fn spawn_cubes(
 fn spawn_external_render_target(
     mut commands: Commands,
     mut external_buffer_source: ResMut<ExternalBufferSource>,
-    mut external_image_loader: ExternalImageAssetLoader,
+    mut external_image_loader: ExternalBufferAssetLoader,
 ) {
     let (buffer_id, creation_data) = external_buffer_source.create_empty_buffer(1920, 1080);
     let external_target_bundle = external_image_loader.load_render_target(creation_data);

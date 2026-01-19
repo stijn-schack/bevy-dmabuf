@@ -1,28 +1,27 @@
 use crate::dmatex::Dmatex;
-use bevy::asset::AssetEventSystems;
-use bevy::camera::{ManualTextureViewHandle, RenderTarget};
-use bevy::ecs::component::{Components, ComponentsRegistrator};
 use bevy::{
+    asset::AssetEventSystems,
+    camera::{ManualTextureViewHandle, RenderTarget},
     ecs::system::SystemParam,
     platform::collections::HashMap,
     prelude::*,
     render::{render_asset::RenderAssetPlugin, texture::GpuImage, RenderApp},
 };
 use render_world::{
-    sync_render_targets, AssetIdCache, GpuExternalImage, PendingExternalRenderTargets,
+    sync_render_targets, AssetIdCache, GpuExternalBuffer, PendingExternalRenderTargets,
 };
 use std::fmt::Debug;
 
 mod render_world;
 
-pub struct DmabufImportPlugin;
+pub struct ExternalBufferPlugin;
 
-impl Plugin for DmabufImportPlugin {
+impl Plugin for ExternalBufferPlugin {
     fn build(&self, app: &mut App) {
-        app.init_asset::<ExternalImage>()
-            .init_resource::<ExternalImageCache>()
+        app.init_asset::<ExternalBuffer>()
+            .init_resource::<ExternalBufferImageTable>()
             .init_resource::<ManualTextureViewHandles>()
-            .add_plugins(RenderAssetPlugin::<GpuExternalImage, GpuImage>::default())
+            .add_plugins(RenderAssetPlugin::<GpuExternalBuffer, GpuImage>::default())
             .add_systems(
                 PostUpdate,
                 remove_ext_image_on_handle_dropped.after(AssetEventSystems),
@@ -38,73 +37,73 @@ impl Plugin for DmabufImportPlugin {
 }
 
 #[derive(SystemParam)]
-pub struct ExternalImageAssetLoader<'w> {
-    external_images: ResMut<'w, Assets<ExternalImage>>,
+pub struct ExternalBufferAssetLoader<'w> {
+    external_images: ResMut<'w, Assets<ExternalBuffer>>,
     images: ResMut<'w, Assets<Image>>,
-    external_image_cache: ResMut<'w, ExternalImageCache>,
+    image_table: ResMut<'w, ExternalBufferImageTable>,
     manual_texture_view_handles: ResMut<'w, ManualTextureViewHandles>,
 }
 
-impl ExternalImageAssetLoader<'_> {
-    pub fn load_texture(&mut self, creation_data: ExternalImageCreationData) -> Handle<Image> {
+impl ExternalBufferAssetLoader<'_> {
+    pub fn load_texture(&mut self, creation_data: ExternalBufferCreationData) -> Handle<Image> {
         let img_handle = self.images.reserve_handle();
-        let ext_handle = self.external_images.add(ExternalImage {
+        let ext_handle = self.external_images.add(ExternalBuffer {
             creation_data: Some(creation_data),
-            usage: ExternalImageUsage::Sampling(img_handle.id()),
+            usage: ExternalBufferUsage::Sampling(img_handle.id()),
         });
 
-        self.external_image_cache
+        self.image_table
             .insert(img_handle.id(), ext_handle);
         img_handle
     }
 
     pub fn load_render_target(
         &mut self,
-        creation_data: ExternalImageCreationData,
+        creation_data: ExternalBufferCreationData,
     ) -> ExternalRenderTargetBundle {
         let view_handle = self.manual_texture_view_handles.reserve_handle();
-        let image_handle = self.external_images.add(ExternalImage {
+        let buffer_handle = self.external_images.add(ExternalBuffer {
             creation_data: Some(creation_data),
-            usage: ExternalImageUsage::RenderTarget(view_handle),
+            usage: ExternalBufferUsage::RenderTarget(view_handle),
         });
         ExternalRenderTargetBundle::new(ExternalRenderTarget {
-            image_handle,
+            _buffer_handle: buffer_handle,
             view_handle,
         })
     }
 }
 
 #[derive(Asset, TypePath, Debug)]
-pub(crate) struct ExternalImage {
-    pub creation_data: Option<ExternalImageCreationData>,
-    pub usage: ExternalImageUsage,
+pub(crate) struct ExternalBuffer {
+    pub creation_data: Option<ExternalBufferCreationData>,
+    pub usage: ExternalBufferUsage,
 }
 
 #[derive(Debug)]
-pub enum ExternalImageCreationData {
+pub enum ExternalBufferCreationData {
     #[cfg(target_os = "linux")]
     Dmabuf { dma: Dmatex },
 }
 
 #[derive(Debug, Copy, Clone)]
-pub(crate) enum ExternalImageUsage {
+pub(crate) enum ExternalBufferUsage {
     Sampling(AssetId<Image>),
     RenderTarget(ManualTextureViewHandle),
 }
 
 #[derive(Resource, Default, Deref, DerefMut)]
-struct ExternalImageCache(HashMap<AssetId<Image>, Handle<ExternalImage>>);
+struct ExternalBufferImageTable(HashMap<AssetId<Image>, Handle<ExternalBuffer>>);
 
 fn remove_ext_image_on_handle_dropped(
     mut image_events: MessageReader<AssetEvent<Image>>,
-    mut image_cache: ResMut<ExternalImageCache>,
+    mut image_table: ResMut<ExternalBufferImageTable>,
 ) {
     for event in image_events.read() {
         if let AssetEvent::Unused { id } = event
-            && let Some(handle) = image_cache.remove(id)
+            && let Some(handle) = image_table.remove(id)
         {
             debug!(
-                "Removed entry from ExternalImageCache: ({}, {})",
+                "Removed entry from ExternalBufferImageTable: ({}, {})",
                 id,
                 handle.id()
             );
@@ -114,7 +113,7 @@ fn remove_ext_image_on_handle_dropped(
 
 #[derive(Component, Debug)]
 pub struct ExternalRenderTarget {
-    image_handle: Handle<ExternalImage>,
+    _buffer_handle: Handle<ExternalBuffer>,
     view_handle: ManualTextureViewHandle,
 }
 
@@ -122,7 +121,6 @@ pub struct ExternalRenderTarget {
 pub struct ExternalRenderTargetBundle {
     external_target: ExternalRenderTarget,
     render_target: RenderTarget,
-    pub camera: Camera,
 }
 
 impl ExternalRenderTargetBundle {
@@ -130,7 +128,6 @@ impl ExternalRenderTargetBundle {
         Self {
             external_target,
             render_target: RenderTarget::None { size: UVec2::ZERO },
-            camera: Camera::default(),
         }
     }
 }

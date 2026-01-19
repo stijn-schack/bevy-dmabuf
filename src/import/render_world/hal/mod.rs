@@ -2,7 +2,7 @@ use crate::{
     dmatex::{Dmatex, DmatexPlane},
     import::{
         render_world::{ImportError, ImportedTexture},
-        ExternalImageUsage,
+        ExternalBufferUsage,
     },
 };
 use ash::vk;
@@ -17,7 +17,7 @@ mod formats;
 pub fn import_dmabuf_as_texture(
     device: &wgpu::Device,
     dma: Dmatex,
-    usage: ExternalImageUsage,
+    usage: ExternalBufferUsage,
 ) -> Result<ImportedTexture, ImportError> {
     let vk_device = unsafe { device.as_hal::<Vulkan>().ok_or(ImportError::NotVulkan) }?;
 
@@ -356,14 +356,14 @@ fn bind_image_memory(
 fn hal_texture_desc(
     dma: &Dmatex,
     format: wgpu::TextureFormat,
-    usage: ExternalImageUsage,
+    usage: ExternalBufferUsage,
 ) -> wgpu::hal::TextureDescriptor<'static> {
     use wgpu::hal::MemoryFlags;
     use wgpu::{Extent3d, TextureDimension, TextureUses};
 
     let usage = match usage {
-        ExternalImageUsage::Sampling { .. } => TextureUses::RESOURCE | TextureUses::COPY_SRC,
-        ExternalImageUsage::RenderTarget { .. } => {
+        ExternalBufferUsage::Sampling { .. } => TextureUses::RESOURCE | TextureUses::COPY_SRC,
+        ExternalBufferUsage::RenderTarget { .. } => {
             TextureUses::COLOR_TARGET | TextureUses::COPY_DST
         }
     };
@@ -388,15 +388,15 @@ fn hal_texture_desc(
 fn wgpu_texture_desc(
     dma: &Dmatex,
     format: wgpu::TextureFormat,
-    usage: ExternalImageUsage,
+    usage: ExternalBufferUsage,
 ) -> wgpu::TextureDescriptor<'static> {
     use wgpu::{Extent3d, TextureDimension, TextureUsages};
 
     let usage = match usage {
-        ExternalImageUsage::Sampling { .. } => {
+        ExternalBufferUsage::Sampling { .. } => {
             TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC
         }
-        ExternalImageUsage::RenderTarget { .. } => {
+        ExternalBufferUsage::RenderTarget { .. } => {
             TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST
         }
     };

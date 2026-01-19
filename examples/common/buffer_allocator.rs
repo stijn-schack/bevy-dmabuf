@@ -2,7 +2,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy_dmabuf::{
     dmatex::{Dmatex, DmatexPlane, Resolution},
-    import::ExternalImageCreationData,
+    import::ExternalBufferCreationData,
 };
 use drm_fourcc::{DrmFourcc, DrmModifier};
 use image::Rgba;
@@ -67,7 +67,7 @@ impl ExternalBufferSource {
     pub fn create_buffer_from_image(
         &mut self,
         image: &Image,
-    ) -> (BufferId, ExternalImageCreationData) {
+    ) -> (BufferId, ExternalBufferCreationData) {
         let size = image.size();
         let mut buffer = self
             .buffer_allocator
@@ -123,7 +123,7 @@ impl ExternalBufferSource {
         &mut self,
         width: u32,
         height: u32,
-    ) -> (BufferId, ExternalImageCreationData) {
+    ) -> (BufferId, ExternalBufferCreationData) {
         let buffer = self
             .buffer_allocator
             .create_buffer(width, height, DrmFourcc::Abgr8888, &[DrmModifier::Linear])
@@ -195,7 +195,7 @@ impl ExternalBufferSource {
     }
 }
 
-fn to_creation_data(dma: Dmabuf, srgb: bool) -> ExternalImageCreationData {
+fn to_creation_data(dma: Dmabuf, srgb: bool) -> ExternalBufferCreationData {
     let planes = {
         let mut planes = Vec::new();
 
@@ -217,7 +217,7 @@ fn to_creation_data(dma: Dmabuf, srgb: bool) -> ExternalImageCreationData {
         y: dma.size().h as u32,
     };
 
-    ExternalImageCreationData::Dmabuf {
+    ExternalBufferCreationData::Dmabuf {
         dma: Dmatex {
             planes,
             res,

@@ -2,7 +2,7 @@ use bevy::{
     asset::embedded_asset, camera_controller::free_camera::FreeCameraPlugin, prelude::*,
     time::common_conditions::on_timer,
 };
-use bevy_dmabuf::import::ExternalImageAssetLoader;
+use bevy_dmabuf::import::ExternalBufferAssetLoader;
 use common::*;
 use std::time::Duration;
 
@@ -104,7 +104,7 @@ fn recreate_external_image(
     test_img: Res<TestImg>,
     mut commands: Commands,
     mut ext_img_src: ResMut<ExternalBufferSource>,
-    mut external_image_loader: ExternalImageAssetLoader,
+    mut external_image_loader: ExternalBufferAssetLoader,
 ) {
     if let Some(test_entity) = test_entity {
         commands.entity(test_entity.entity).despawn();

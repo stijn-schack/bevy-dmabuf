@@ -1,7 +1,7 @@
 use crate::common::buffer_allocator::ExternalImageSourcePlugin;
 use bevy::camera_controller::free_camera::FreeCamera;
 use bevy::{app::PluginGroupBuilder, log::LogPlugin, prelude::*};
-use bevy_dmabuf::{import::DmabufImportPlugin, wgpu_init::add_dmabuf_init_plugin};
+use bevy_dmabuf::{import::ExternalBufferPlugin, wgpu_init::add_dmabuf_init_plugin};
 use std::path::Path;
 
 mod buffer_allocator;
@@ -36,7 +36,7 @@ impl PluginGroup for ExamplePlugins {
                 }),
                 ..default()
             })
-            .add(DmabufImportPlugin)
+            .add(ExternalBufferPlugin)
             .add(ExternalImageSourcePlugin { capture_dir: Path::new(self.capture_dir) });
 
         add_dmabuf_init_plugin(group)

@@ -1,4 +1,4 @@
-use super::{ExternalImage, ExternalImageCreationData, ExternalImageUsage, ExternalRenderTarget};
+use super::{ExternalBuffer, ExternalBufferCreationData, ExternalBufferUsage, ExternalRenderTarget};
 use ash::vk;
 use bevy::camera::RenderTarget;
 use bevy::render::MainWorld;
@@ -24,7 +24,7 @@ pub mod hal;
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum GpuExternalImage {
+pub(crate) enum GpuExternalBuffer {
     Sampling {
         image_id: AssetId<Image>,
         gpu_image: GpuImage,
@@ -36,8 +36,8 @@ pub(crate) enum GpuExternalImage {
     Invalid(ImportError),
 }
 
-impl RenderAsset for GpuExternalImage {
-    type SourceAsset = ExternalImage;
+impl RenderAsset for GpuExternalBuffer {
+    type SourceAsset = ExternalBuffer;
     type Param = (
         SRes<RenderDevice>,
         SRes<DefaultImageSampler>,
@@ -53,7 +53,7 @@ impl RenderAsset for GpuExternalImage {
     fn byte_len(source_asset: &Self::SourceAsset) -> Option<usize> {
         debug_assert!(source_asset.creation_data.is_some());
         source_asset.creation_data.as_ref().map(|data| match data {
-            ExternalImageCreationData::Dmabuf { dma, .. } => {
+            ExternalBufferCreationData::Dmabuf { dma, .. } => {
                 dma.res.x as usize * dma.res.y as usize
             }
         })
@@ -74,13 +74,13 @@ impl RenderAsset for GpuExternalImage {
 
         let (render_device, default_sampler, gpu_images, asset_ids, pending_render_targets) = params;
 
-        let ExternalImageCreationData::Dmabuf { dma } = source_asset.creation_data.unwrap();
+        let ExternalBufferCreationData::Dmabuf { dma } = source_asset.creation_data.unwrap();
         debug!("Importing external texture into render context");
         let import_result =
             hal::import_dmabuf_as_texture(render_device.wgpu_device(), dma, source_asset.usage);
         let gpu_ext_img = match import_result {
             Ok(imported) => match source_asset.usage {
-                ExternalImageUsage::Sampling(image_id) => {
+                ExternalBufferUsage::Sampling(image_id) => {
                     let texture_format = imported.texture.format();
                     let size = imported.texture.size();
                     let mips = imported.texture.mip_level_count();
@@ -98,7 +98,7 @@ impl RenderAsset for GpuExternalImage {
                         },
                     })
                 }
-                ExternalImageUsage::RenderTarget(handle) => {
+                ExternalBufferUsage::RenderTarget(handle) => {
                     let extent_3d = imported.texture.size();
                     Ok(Self::RenderTarget {
                         handle,
@@ -114,7 +114,7 @@ impl RenderAsset for GpuExternalImage {
         }?;
 
         match &gpu_ext_img {
-            GpuExternalImage::Sampling {
+            GpuExternalBuffer::Sampling {
                 image_id,
                 gpu_image,
             } => {
@@ -125,7 +125,7 @@ impl RenderAsset for GpuExternalImage {
                 gpu_images.insert(*image_id, gpu_image.clone());
                 asset_ids.insert(asset_id, *image_id);
             }
-            GpuExternalImage::RenderTarget {
+            GpuExternalBuffer::RenderTarget {
                 handle,
                 texture_view,
             } => {
@@ -135,7 +135,7 @@ impl RenderAsset for GpuExternalImage {
                 );
                 pending_render_targets.insert(*handle, texture_view.clone());
             }
-            GpuExternalImage::Invalid(err) => {
+            GpuExternalBuffer::Invalid(err) => {
                 error!("Failed to import external image {}: {}", asset_id, err)
             }
         }
@@ -168,7 +168,7 @@ impl RenderAsset for GpuExternalImage {
                 .take()
                 .ok_or(AssetExtractionError::AlreadyExtracted)?;
 
-            Ok(ExternalImage {
+            Ok(ExternalBuffer {
                 creation_data: Some(creation_data),
                 usage: source.usage,
             })
@@ -208,17 +208,17 @@ pub struct ImportedTexture {
 }
 
 #[derive(Resource, Debug, Default, Deref, DerefMut)]
-pub(crate) struct AssetIdCache(HashMap<AssetId<ExternalImage>, AssetId<Image>>);
+pub(crate) struct AssetIdCache(HashMap<AssetId<ExternalBuffer>, AssetId<Image>>);
 
-impl Clone for ExternalImage {
-    /// ExternalImages should not be cloned.
+impl Clone for ExternalBuffer {
+    /// ExternalBuffers should not be cloned.
     /// The render world needs exclusive access to underlying file descriptors.
     /// However, to implement [RenderAsset], [RenderAsset::SourceAsset] needs to implement [Clone].
     /// This is a workaround to ensure no data is actually cloned, while still adhering to the trait bounds.
     fn clone(&self) -> Self {
         #[cfg(debug_assertions)]
         unreachable!(
-            "Clone implementation needed to satisfy RenderAsset trait bounds. However, ExternalImage should never be cloned."
+            "Clone implementation needed to satisfy RenderAsset trait bounds. However, ExternalBuffer should never be cloned."
         );
         #[cfg(not(debug_assertions))]
         Self {

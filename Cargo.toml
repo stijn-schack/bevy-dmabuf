@@ -8,6 +8,11 @@ repository = "https://github.com/Schmarni-Dev/bevy-dmabuf/"
 description = "allows importing linux dmabufs into a bevy image"
 keywords = ["bevy", "dmabuf", "dmatex"]
 
+[features]
+default = ["sampling", "render_target"]
+sampling = ["bevy/bevy_image"]
+render_target = ["bevy/bevy_camera"]
+
 [dependencies]
 ash = "0.38"
 drm-fourcc = "2.2"
@@ -19,7 +24,6 @@ version = "0.18"
 default-features = false
 features = [
     "bevy_asset",
-    "bevy_image",
     "bevy_log",
     "bevy_render",
     "raw_vulkan_init",
@@ -49,4 +53,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 
 [[example]]
-name = "dmabuf_import"
+name = "dmabuf_sampling"
+required-features = ["sampling"]
+
+[[example]]
+name = "dmabuf_render_target"
+required-features = ["render_target"]

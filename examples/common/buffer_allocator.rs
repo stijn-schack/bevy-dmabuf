@@ -1,22 +1,17 @@
-use bevy::platform::collections::HashMap;
-use bevy::prelude::*;
+use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_dmabuf::{
     dmatex::{Dmatex, DmatexPlane, Resolution},
-    import::ExternalBufferCreationData,
+    ExternalBufferCreationData,
 };
 use drm_fourcc::{DrmFourcc, DrmModifier};
-use image::Rgba;
-use smithay::backend::allocator::dmabuf::Dmabuf;
-use smithay::backend::allocator::gbm::GbmBuffer;
 use smithay::backend::allocator::{
-    dmabuf::AsDmabuf, gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
+    dmabuf::{AsDmabuf, Dmabuf}, gbm::{GbmAllocator, GbmBuffer, GbmBufferFlags, GbmDevice},
     Allocator,
     Buffer,
 };
-use std::path::PathBuf;
 use std::{
     fs::{File, OpenOptions},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 pub(super) struct ExternalImageSourcePlugin {

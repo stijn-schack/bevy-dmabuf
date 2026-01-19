@@ -2,7 +2,7 @@ use bevy::{
     camera_controller::free_camera::FreeCameraPlugin, input::common_conditions::input_just_pressed,
     prelude::*,
 };
-use bevy_dmabuf::import::ExternalBufferAssetLoader;
+use bevy_dmabuf::ExternalBufferAssetLoader;
 use common::*;
 mod common;
 

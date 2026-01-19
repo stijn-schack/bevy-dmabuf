@@ -1,9 +1,9 @@
 use crate::{
-    dmatex::{Dmatex, DmatexPlane},
-    import::{
+    asset::{
         render_world::{ImportError, ImportedTexture},
         ExternalBufferUsage,
     },
+    dmatex::{Dmatex, DmatexPlane},
 };
 use ash::vk;
 use drm_fourcc::DrmModifier;
@@ -362,7 +362,9 @@ fn hal_texture_desc(
     use wgpu::{Extent3d, TextureDimension, TextureUses};
 
     let usage = match usage {
+        #[cfg(feature = "sampling")]
         ExternalBufferUsage::Sampling { .. } => TextureUses::RESOURCE | TextureUses::COPY_SRC,
+        #[cfg(feature = "render_target")]
         ExternalBufferUsage::RenderTarget { .. } => {
             TextureUses::COLOR_TARGET | TextureUses::COPY_DST
         }
@@ -393,9 +395,11 @@ fn wgpu_texture_desc(
     use wgpu::{Extent3d, TextureDimension, TextureUsages};
 
     let usage = match usage {
+        #[cfg(feature = "sampling")]
         ExternalBufferUsage::Sampling { .. } => {
             TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC
         }
+        #[cfg(feature = "render_target")]
         ExternalBufferUsage::RenderTarget { .. } => {
             TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST
         }

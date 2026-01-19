@@ -2,7 +2,7 @@ use bevy::{
     asset::embedded_asset, camera_controller::free_camera::FreeCameraPlugin, prelude::*,
     time::common_conditions::on_timer,
 };
-use bevy_dmabuf::import::ExternalBufferAssetLoader;
+use bevy_dmabuf::ExternalBufferAssetLoader;
 use common::*;
 use std::time::Duration;
 
@@ -55,7 +55,7 @@ fn spawn_raw_img_entity(
 }
 
 fn load_test_image(asset_server: Res<AssetServer>, mut commands: Commands) {
-    let handle: Handle<Image> = asset_server.load("embedded://dmabuf_import/test_img.png");
+    let handle: Handle<Image> = asset_server.load("embedded://dmabuf_sampling/test_img.png");
     commands.insert_resource(TestImgHandle(handle));
 }
 
@@ -112,7 +112,7 @@ fn recreate_external_image(
         commands.remove_resource::<TestEntity>()
     } else {
         let (buffer_id, creation_data) = ext_img_src.create_buffer_from_image(&test_img);
-        let image_handle = external_image_loader.load_texture(creation_data);
+        let image_handle = external_image_loader.load_as_image(creation_data);
         commands.trigger(ExternalImageReadyEvent {
             image_handle,
             buffer_id,

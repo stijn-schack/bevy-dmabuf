@@ -1,7 +1,11 @@
 use crate::common::buffer_allocator::ExternalImageSourcePlugin;
-use bevy::camera_controller::free_camera::FreeCamera;
-use bevy::{app::PluginGroupBuilder, log::LogPlugin, prelude::*};
-use bevy_dmabuf::{import::ExternalBufferPlugin, wgpu_init::add_dmabuf_init_plugin};
+use bevy::{
+    app::PluginGroupBuilder,
+    camera_controller::free_camera::FreeCamera,
+    log::LogPlugin,
+    prelude::*,
+};
+use bevy_dmabuf::{wgpu_init::add_dmabuf_init_plugin, ExternalBufferPlugin};
 use std::path::Path;
 
 mod buffer_allocator;
@@ -9,7 +13,7 @@ pub use buffer_allocator::*;
 
 pub struct ExamplePlugins {
     pub window_title: &'static str,
-    pub capture_dir: &'static str
+    pub capture_dir: &'static str,
 }
 
 impl Default for ExamplePlugins {
@@ -37,7 +41,9 @@ impl PluginGroup for ExamplePlugins {
                 ..default()
             })
             .add(ExternalBufferPlugin)
-            .add(ExternalImageSourcePlugin { capture_dir: Path::new(self.capture_dir) });
+            .add(ExternalImageSourcePlugin {
+                capture_dir: Path::new(self.capture_dir),
+            });
 
         add_dmabuf_init_plugin(group)
     }
@@ -51,11 +57,7 @@ pub fn spawn_base_scene(
     info!("Spawning base scene");
     // camera
     let camera_transform = Transform::from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3::ZERO, Vec3::Y);
-    commands.spawn((
-        Camera3d::default(),
-        camera_transform,
-        FreeCamera::default(),
-    ));
+    commands.spawn((Camera3d::default(), camera_transform, FreeCamera::default()));
 
     commands.spawn((
         Mesh3d(meshes.add(Circle::new(4.0))),

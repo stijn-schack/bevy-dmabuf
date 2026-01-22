@@ -143,11 +143,12 @@ impl Clone for ExternalBuffer {
     fn clone(&self) -> Self {
         #[cfg(debug_assertions)]
         unreachable!(
-            "Clone implementation needed to satisfy RenderAsset trait bounds. However, ExternalBuffer should never be cloned."
+            "Clone implementation is needed to satisfy RenderAsset trait bounds. However, ExternalBuffer should never be cloned."
         );
         #[cfg(not(debug_assertions))]
         Self {
             creation_data: None,
+            usage: self.usage,
         }
     }
 }

@@ -17,7 +17,7 @@ render_target = ["bevy/bevy_camera"]
 ash = "0.38"
 drm-fourcc = "2.2"
 thiserror = "2.0"
-wgpu = "*" # use bevy's wgpu version
+wgpu = "27" # use bevy's wgpu version
 
 [dependencies.bevy]
 version = "0.18"

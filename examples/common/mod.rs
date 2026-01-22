@@ -1,11 +1,9 @@
 use crate::common::buffer_allocator::ExternalImageSourcePlugin;
 use bevy::{
-    app::PluginGroupBuilder,
-    camera_controller::free_camera::FreeCamera,
-    log::LogPlugin,
-    prelude::*,
+    app::PluginGroupBuilder, camera_controller::free_camera::FreeCamera, log::LogPlugin,
+    prelude::*, render::RenderPlugin,
 };
-use bevy_dmabuf::{wgpu_init::add_dmabuf_init_plugin, ExternalBufferPlugin};
+use bevy_dmabuf::{wgpu_init::DmabufWgpuInitPlugin, ExternalBufferPlugin};
 use std::path::Path;
 
 mod buffer_allocator;
@@ -27,7 +25,7 @@ impl Default for ExamplePlugins {
 
 impl PluginGroup for ExamplePlugins {
     fn build(self) -> PluginGroupBuilder {
-        let group = PluginGroupBuilder::start::<Self>()
+        PluginGroupBuilder::start::<Self>()
             .add_group(DefaultPlugins)
             .set(LogPlugin {
                 filter: "info,bevy_dmabuf=trace".to_string(),
@@ -40,12 +38,11 @@ impl PluginGroup for ExamplePlugins {
                 }),
                 ..default()
             })
+            .add_before::<RenderPlugin>(DmabufWgpuInitPlugin)
             .add(ExternalBufferPlugin)
             .add(ExternalImageSourcePlugin {
                 capture_dir: Path::new(self.capture_dir),
-            });
-
-        add_dmabuf_init_plugin(group)
+            })
     }
 }
 

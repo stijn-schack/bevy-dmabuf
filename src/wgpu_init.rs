@@ -1,24 +1,12 @@
 use bevy::{
-    app::{
-        App,
-        Plugin,
-        PluginGroup,
-        PluginGroupBuilder,
-    },
+    app::{App, Plugin},
     log::warn,
     render::{
-        renderer::{
-            raw_vulkan_init::RawVulkanInitSettings,
-            RenderAdapterInfo,
-        },
-        settings::{Backends, RenderCreation, WgpuSettings},
-        RenderApp,
+        renderer::{raw_vulkan_init::RawVulkanInitSettings, RenderAdapterInfo}, RenderApp,
         RenderPlugin,
     },
-    utils::default,
 };
-use std::any::type_name;
-use std::ffi::CStr;
+use std::{any::type_name, ffi::CStr};
 use wgpu::Backend::Vulkan;
 
 const REQUIRED_EXTENSIONS: &[&CStr] = &[
@@ -35,14 +23,21 @@ pub const fn required_device_extensions() -> &'static [&'static CStr] {
 
 /// Plugin to init the vulkan session with the required extensions,
 /// probably not needed when using bevy_mod_openxr
+/// Adding this plugin means that wgpu will be forced to use the Vulkan backend.
+/// Must be added before [RenderPlugin], if using [bevy::DefaultPlugins],
+/// make sure to add this using [bevy::app::PluginGroupBuilder::add_before]
+///
+/// **Usage**
+///
+/// ```
+/// use bevy::prelude::*;
+/// use bevy::render::RenderPlugin;
+/// use bevy_dmabuf::wgpu_init::DmabufWgpuInitPlugin;
+///
+/// App::new()
+///  .add_plugins(DefaultPlugins.build().add_before::<RenderPlugin>(DmabufWgpuInitPlugin));
+/// ```
 pub struct DmabufWgpuInitPlugin;
-
-pub fn add_dmabuf_init_plugin<G: PluginGroup>(plugins: G) -> PluginGroupBuilder {
-    plugins
-        .build()
-        .disable::<RenderPlugin>()
-        .add_before::<RenderPlugin>(DmabufWgpuInitPlugin)
-}
 
 impl Plugin for DmabufWgpuInitPlugin {
     fn build(&self, app: &mut App) {
@@ -54,24 +49,19 @@ impl Plugin for DmabufWgpuInitPlugin {
             );
         }
 
-        let mut vulkan_settings = RawVulkanInitSettings::default();
+        let mut vulkan_settings = app
+            .world_mut()
+            .get_resource_or_init::<RawVulkanInitSettings>();
         unsafe {
             vulkan_settings.add_create_device_callback(|args, _adapter, _additional_features| {
                 args.extensions.extend(REQUIRED_EXTENSIONS);
             })
         }
-        app.insert_resource(vulkan_settings)
-            .add_plugins(RenderPlugin {
-                render_creation: RenderCreation::Automatic(WgpuSettings {
-                    backends: Some(Backends::VULKAN),
-                    ..default()
-                }),
-                ..default()
-            });
     }
 
     fn ready(&self, app: &App) -> bool {
-        app.get_added_plugins::<RenderPlugin>().first()
+        app.get_added_plugins::<RenderPlugin>()
+            .first()
             .map(|render_plugin| render_plugin.ready(app))
             .unwrap_or(true)
     }
@@ -81,16 +71,11 @@ impl Plugin for DmabufWgpuInitPlugin {
             let backend = render_app.world().resource::<RenderAdapterInfo>().backend;
             if backend != Vulkan {
                 warn!(
-                    "{} only supports the wgpu Vulkan backend. Currently running with {backend}",
-                    type_name::<Self>()
+                    "This plugin only supports the Vulkan backend. Currently running with {backend}."
                 );
             }
         } else {
-            warn!(
-                "Added {0} but the RenderApp is not present. Either remove {0} or add {1}",
-                type_name::<Self>(),
-                type_name::<RenderPlugin>()
-            )
+            warn!("Render app not present. This plugin has no effect.");
         }
     }
 }

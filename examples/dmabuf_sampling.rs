@@ -2,7 +2,7 @@ use bevy::{
     asset::embedded_asset, camera_controller::free_camera::FreeCameraPlugin, prelude::*,
     time::common_conditions::on_timer,
 };
-use bevy_dmabuf::ExternalBufferAssetLoader;
+use bevy_dmabuf::{ExternalBufferLoader, TextureSampling};
 use common::*;
 use std::time::Duration;
 
@@ -104,7 +104,7 @@ fn recreate_external_image(
     test_img: Res<TestImg>,
     mut commands: Commands,
     mut ext_img_src: ResMut<ExternalBufferSource>,
-    mut external_image_loader: ExternalBufferAssetLoader,
+    mut external_image_loader: ExternalBufferLoader<TextureSampling>,
 ) {
     if let Some(test_entity) = test_entity {
         commands.entity(test_entity.entity).despawn();
@@ -112,7 +112,7 @@ fn recreate_external_image(
         commands.remove_resource::<TestEntity>()
     } else {
         let (buffer_id, creation_data) = ext_img_src.create_buffer_from_image(&test_img);
-        let image_handle = external_image_loader.load_as_image(creation_data);
+        let image_handle = external_image_loader.load(creation_data);
         commands.trigger(ExternalImageReadyEvent {
             image_handle,
             buffer_id,

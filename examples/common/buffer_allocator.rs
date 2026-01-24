@@ -66,7 +66,7 @@ impl ExternalBufferSource {
         let size = image.size();
         let mut buffer = self
             .buffer_allocator
-            .create_buffer(size.x, size.y, DrmFourcc::Abgr8888, &[DrmModifier::Linear])
+            .create_buffer(size.x, size.y, DrmFourcc::Abgr8888, &[DrmModifier::Invalid])
             .expect("Failed to allocate buffer");
 
         let src = image.data.clone().unwrap();
@@ -154,7 +154,7 @@ impl ExternalBufferSource {
     }
 
     fn write_buffer_to_disk(&self, buffer: &GbmBuffer, file_path: &Path) {
-        use image::{ImageBuffer, ImageFormat, Rgba};
+        use ::image::{ImageBuffer, ImageFormat, Rgba};
         let image = buffer
             .map(0, 0, buffer.width(), buffer.height(), |mapped_buffer| {
                 let stride = buffer.stride() as usize;

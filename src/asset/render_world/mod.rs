@@ -1,14 +1,18 @@
 use super::{ExternalBuffer, ExternalBufferCreationData, ExternalBufferUsage};
 use ash::vk;
-use bevy::ecs::system::lifetimeless::SCommands;
 use bevy::{
-    asset::{AssetId, RenderAssetUsages},
-    ecs::system::{lifetimeless::SRes, SystemParamItem},
+    asset::{AssetId, RenderAssetUsages, UntypedAssetId},
+    ecs::system::{
+        lifetimeless::{SCommands, SRes, SResMut},
+        SystemParamItem,
+    },
+    platform::collections::HashMap,
     prelude::*,
     render::{
-        render_asset::{AssetExtractionError, PrepareAssetError, RenderAsset},
+        erased_render_asset::{ErasedRenderAsset, PrepareAssetError},
         render_resource::{Texture, TextureView},
         renderer::RenderDevice,
+        MainWorld,
     },
 };
 use thiserror::Error;
@@ -18,36 +22,34 @@ mod hal;
 #[derive(Debug)]
 #[allow(unused)]
 pub(super) enum GpuExternalBuffer {
-    Imported {
-        texture: Texture,
-        view: TextureView,
-        usage: ExternalBufferUsage,
-    },
+    Imported(ImportedTexture),
     Invalid(ImportError),
 }
 
 #[derive(Debug)]
-struct ImportedTexture {
+pub(super) struct ImportedTexture {
     texture: Texture,
-    texture_view: TextureView,
+    view: TextureView,
 }
 
 #[derive(Event, Debug)]
-pub(crate) struct ExternalBufferImported {
-    pub asset_id: AssetId<ExternalBuffer>,
+pub struct ExternalBufferImported<U: ExternalBufferUsage> {
+    pub asset_id: UntypedAssetId,
     pub texture: Texture,
     pub view: TextureView,
-    pub usage: ExternalBufferUsage,
+    pub usage_data: U,
 }
 
-#[derive(Event, Debug)]
-pub(crate) struct ExternalBufferImportFailed {
-    pub asset_id: AssetId<ExternalBuffer>,
+#[derive(Event, Message, Debug)]
+pub struct ExternalBufferImportFailed<U> {
+    pub buffer_id: UntypedAssetId,
+    pub usage_data: U,
 }
 
-impl RenderAsset for GpuExternalBuffer {
-    type SourceAsset = ExternalBuffer;
-    type Param = (SRes<RenderDevice>, SCommands);
+impl<U: ExternalBufferUsage> ErasedRenderAsset for ExternalBuffer<U> {
+    type SourceAsset = Self;
+    type ErasedAsset = GpuExternalBuffer;
+    type Param = (SRes<RenderDevice>, SCommands, SResMut<FailedImports<U>>);
 
     fn asset_usage(_: &Self::SourceAsset) -> RenderAssetUsages {
         RenderAssetUsages::RENDER_WORLD
@@ -61,46 +63,34 @@ impl RenderAsset for GpuExternalBuffer {
             }
         })
     }
+
     fn prepare_asset(
         source_asset: Self::SourceAsset,
         asset_id: AssetId<Self::SourceAsset>,
         params: &mut SystemParamItem<Self::Param>,
-        _previous_asset: Option<&Self>,
-    ) -> Result<Self, PrepareAssetError<Self::SourceAsset>> {
-        debug_assert!(
-            _previous_asset.is_none(),
-            "External images have immutable descriptions. Do not attempt to change the internals representations directly. If a new import is wanted, simply add another ExternalImage asset."
-        );
-
+    ) -> std::result::Result<Self::ErasedAsset, PrepareAssetError<Self::SourceAsset>> {
         trace!("Trying to prepare render asset {asset_id}");
 
-        let (render_device, commands) = params;
+        let (render_device, commands, failed_imports) = params;
 
         let ExternalBufferCreationData::Dmabuf { dma } = source_asset.creation_data.unwrap();
 
         let import_result =
-            hal::import_dmabuf_as_texture(render_device.wgpu_device(), dma, source_asset.usage);
+            hal::import_dmabuf_as_texture(render_device.wgpu_device(), dma, U::texture_usages());
 
         let gpu_buffer = match import_result {
-            Ok(ImportedTexture {
-                   texture,
-                   texture_view: view,
-               }) => {
+            Ok(imported) => {
                 commands.trigger(ExternalBufferImported {
-                    asset_id,
-                    texture: texture.clone(),
-                    view: view.clone(),
-                    usage: source_asset.usage,
+                    asset_id: asset_id.untyped(),
+                    texture: imported.texture.clone(),
+                    view: imported.view.clone(),
+                    usage_data: source_asset.usage,
                 });
-                GpuExternalBuffer::Imported {
-                    texture,
-                    view,
-                    usage: source_asset.usage,
-                }
+                GpuExternalBuffer::Imported(imported)
             }
             Err(err) => {
-                error!("Failed to import external image {}: {}", asset_id, err);
-                commands.trigger(ExternalBufferImportFailed { asset_id });
+                error!("Failed to import external buffer {}: {}", asset_id, err);
+                failed_imports.insert(asset_id, source_asset.usage);
                 GpuExternalBuffer::Invalid(err)
             }
         };
@@ -112,30 +102,32 @@ impl RenderAsset for GpuExternalBuffer {
         asset_id: AssetId<Self::SourceAsset>,
         _param: &mut SystemParamItem<Self::Param>,
     ) {
-        trace!("unloaded GpuExternalBuffer {}", asset_id);
-    }
-
-    fn take_gpu_data(
-        source: &mut Self::SourceAsset,
-        previous_gpu_asset: Option<&Self>,
-    ) -> Result<Self::SourceAsset, AssetExtractionError> {
-        if previous_gpu_asset.is_some() {
-            Err(AssetExtractionError::AlreadyExtracted)
-        } else {
-            let creation_data = source
-                .creation_data
-                .take()
-                .ok_or(AssetExtractionError::AlreadyExtracted)?;
-
-            Ok(ExternalBuffer {
-                creation_data: Some(creation_data),
-                usage: source.usage,
-            })
-        }
+        trace!("Unloaded external buffer {}", asset_id);
     }
 }
 
-impl Clone for ExternalBuffer {
+#[derive(Resource, Debug, Deref, DerefMut)]
+pub(super) struct FailedImports<U: ExternalBufferUsage>(HashMap<AssetId<ExternalBuffer<U>>, U>);
+
+impl<U: ExternalBufferUsage> Default for FailedImports<U> {
+    fn default() -> Self {
+        Self(default())
+    }
+}
+pub(super) fn trigger_failed_import_events<U: ExternalBufferUsage>(
+    mut main_world: ResMut<MainWorld>,
+    mut failed_imports: ResMut<FailedImports<U>>,
+) {
+    failed_imports
+        .drain()
+        .map(|(asset_id, usage_data)| ExternalBufferImportFailed {
+            buffer_id: asset_id.untyped(),
+            usage_data,
+        })
+        .for_each(|event| main_world.trigger(event));
+}
+
+impl<U: ExternalBufferUsage> Clone for ExternalBuffer<U> {
     /// ExternalBuffers should not be cloned.
     /// The render world needs exclusive access to underlying file descriptors.
     /// However, to implement [RenderAsset], [RenderAsset::SourceAsset] needs to implement [Clone].

@@ -1,115 +1,81 @@
-use crate::asset::{
-    ExternalBuffer, ExternalBufferAssetLoader, ExternalBufferCreationData, ExternalBufferUsage,
+use crate::{
+    asset::{ExternalBufferAssetPlugin, ExternalBufferUsage}, ExternalBufferImportFailed,
+    ExternalBufferImported,
 };
 use bevy::{
-    asset::AssetEventSystems, ecs::system::SystemParam, platform::collections::HashMap, prelude::*,
-    render::RenderApp,
+    asset::AssetEventSystems,
+    ecs::{
+        system::lifetimeless::{SRes, SResMut},
+        system::SystemParamItem,
+    },
+    platform::collections::HashMap,
+    prelude::*,
+    render::{
+        render_asset::RenderAssets,
+        render_resource::TextureUsages,
+        texture::{DefaultImageSampler, GpuImage},
+    },
 };
+use std::ops::Deref;
 
 pub(crate) struct ExternalImagePlugin;
 
 impl Plugin for ExternalImagePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ExternalBufferImageTable>().add_systems(
-            PostUpdate,
-            sync_external_buffer_to_image_handle.after(AssetEventSystems),
-        );
-
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .world_mut()
-                .add_observer(render_world::handle_buffer_imported_event);
-        }
+        app.add_plugins(ExternalBufferAssetPlugin::<TextureSampling>::default())
+            .init_resource::<ExternalBufferImageTable>()
+            .add_systems(
+                PostUpdate,
+                sync_external_buffer_to_image_handle.after(AssetEventSystems),
+            );
     }
 }
 
-#[derive(SystemParam)]
-pub(crate) struct ExternalImageLoaderParams<'w> {
-    images: ResMut<'w, Assets<Image>>,
-    image_table: ResMut<'w, ExternalBufferImageTable>,
+#[derive(TypePath, Debug)]
+pub struct TextureSampling {
+    image_id: AssetId<Image>,
 }
 
-impl ExternalImageLoaderParams<'_> {
-    fn reserve_handle(&mut self) -> Handle<Image> {
-        self.images.reserve_handle()
+impl ExternalBufferUsage for TextureSampling {
+    type PublicType = Handle<Image>;
+    type MainParams = (SResMut<Assets<Image>>, SResMut<ExternalBufferImageTable>);
+    type RenderParams = (SResMut<RenderAssets<GpuImage>>, SRes<DefaultImageSampler>);
+
+    fn texture_usages() -> TextureUsages {
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC
     }
 
-    fn register_handles(
-        &mut self,
-        image_id: AssetId<Image>,
-        buffer_handle: Handle<ExternalBuffer>,
+    fn init(
+        buffer_handle: UntypedHandle,
+        params: &mut SystemParamItem<Self::MainParams>,
+    ) -> (Self, Self::PublicType) {
+        let (images, external_buffer_image_table) = params;
+        let image_handle = images.reserve_handle();
+        external_buffer_image_table.insert(image_handle.id(), buffer_handle);
+        (
+            Self {
+                image_id: image_handle.id(),
+            },
+            image_handle,
+        )
+    }
+
+    fn on_buffer_imported(
+        event: On<ExternalBufferImported<Self>>,
+        params: &mut SystemParamItem<Self::RenderParams>,
     ) {
-        self.image_table.insert(image_id, buffer_handle);
-    }
-}
-
-impl<'w> ExternalBufferAssetLoader<'w> {
-    pub fn load_as_image(&mut self, creation_data: ExternalBufferCreationData) -> Handle<Image> {
-        let image_handle = self.image_loader.reserve_handle();
-
-        let buffer_handle = self.add(ExternalBuffer {
-            creation_data: Some(creation_data),
-            usage: ExternalBufferUsage::Sampling(image_handle.id()),
-        });
-
-        self.image_loader
-            .register_handles(image_handle.id(), buffer_handle);
-        image_handle
-    }
-}
-
-#[derive(Resource, Default, Deref, DerefMut)]
-struct ExternalBufferImageTable(HashMap<AssetId<Image>, Handle<ExternalBuffer>>);
-
-fn sync_external_buffer_to_image_handle(
-    mut image_events: MessageReader<AssetEvent<Image>>,
-    mut image_table: ResMut<ExternalBufferImageTable>,
-) {
-    for event in image_events.read() {
-        match event {
-            AssetEvent::Unused { id } | AssetEvent::Added { id } => {
-                if let Some(handle) = image_table.remove(id) {
-                    debug!(
-                        "Removed entry from ExternalBufferImageTable: ({}, {})",
-                        id,
-                        handle.id()
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-pub(crate) mod render_world {
-    use crate::asset::{render_world::ExternalBufferImported, ExternalBufferUsage};
-    use bevy::{
-        prelude::*,
-        render::render_asset::RenderAssets,
-        render::texture::{DefaultImageSampler, GpuImage},
-    };
-    use std::ops::Deref;
-
-    pub fn handle_buffer_imported_event(
-        event: On<ExternalBufferImported>,
-        mut gpu_images: ResMut<RenderAssets<GpuImage>>,
-        default_sampler: Res<DefaultImageSampler>,
-    ) {
+        let (gpu_images, default_sampler) = params;
         let ExternalBufferImported {
             asset_id,
             texture,
             view,
-            usage,
+            usage_data,
         } = event.deref();
-
-        let ExternalBufferUsage::Sampling(image_id) = usage else {
-            return;
-        };
 
         let texture_format = texture.format();
         let size = texture.size();
         let mips = texture.mip_level_count();
-        let sampler = (**default_sampler).clone();
+        let sampler = (***default_sampler).clone();
 
         let gpu_image = GpuImage {
             texture: texture.clone(),
@@ -122,11 +88,50 @@ pub(crate) mod render_world {
             had_data: false,
         };
 
-        gpu_images.insert(*image_id, gpu_image);
+        gpu_images.insert(usage_data.image_id, gpu_image);
 
         debug!(
             "Set GpuImage for {}, backed by external buffer {}",
-            image_id, asset_id
+            usage_data.image_id, asset_id
         );
+    }
+
+    fn on_buffer_import_failed(
+        event: On<ExternalBufferImportFailed<Self>>,
+        params: &mut SystemParamItem<Self::MainParams>,
+    ) {
+        debug!("Received {event:?}, attempting to insert fallback image.",);
+        let image_id = event.usage_data.image_id;
+        let (images, image_table) = params;
+        if let Err(err) = images.insert(image_id, Image::default()) {
+            warn!(
+                "Failed to insert fallback image with id {image_id} for failed buffer import {}. {err}",
+                event.buffer_id
+            );
+        }
+        image_table.remove(&event.usage_data.image_id);
+    }
+}
+
+#[derive(Resource, Default, Deref, DerefMut)]
+pub struct ExternalBufferImageTable(HashMap<AssetId<Image>, UntypedHandle>);
+
+fn sync_external_buffer_to_image_handle(
+    mut image_events: MessageReader<AssetEvent<Image>>,
+    mut image_table: ResMut<ExternalBufferImageTable>,
+) {
+    for event in image_events.read() {
+        match event {
+            AssetEvent::Unused { id } | AssetEvent::Added { id } | AssetEvent::Modified { id } => {
+                if let Some(handle) = image_table.remove(id) {
+                    debug!(
+                        "Removed entry from ExternalBufferImageTable: ({}, {})",
+                        id,
+                        handle.id()
+                    );
+                }
+            }
+            _ => {}
+        }
     }
 }

@@ -1,57 +1,85 @@
+use crate::asset::render_world::ExternalBufferImported;
 use crate::asset::*;
+use bevy::ecs::system::lifetimeless::SResMut;
+use bevy::ecs::system::SystemParamItem;
+use bevy::render::render_resource::TextureUsages;
+use bevy::render::texture::ManualTextureView;
 use bevy::{
     camera::{ManualTextureViewHandle, RenderTarget},
-    ecs::system::SystemParam,
     prelude::*,
     render::RenderApp,
 };
-
 use render_world::*;
+use std::ops::Deref;
 
 pub(crate) struct ExternalRenderTargetPlugin;
 
 impl Plugin for ExternalRenderTargetPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ManualTextureViewHandles>();
+        app.add_plugins(ExternalBufferAssetPlugin::<CameraRenderTarget>::default())
+            .init_resource::<ManualTextureViewHandles>();
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .add_systems(ExtractSchedule, sync_render_targets)
                 .init_resource::<PendingExternalRenderTargets>();
-            let render_world = render_app.world_mut();
-            render_world.add_observer(add_pending_target_on_buffer_imported);
         }
     }
 }
 
-#[derive(SystemParam)]
-pub(crate) struct ExternalRenderTargetLoaderParams<'w> {
-    manual_texture_view_handles: ResMut<'w, ManualTextureViewHandles>,
-}
-
-impl<'w> ExternalBufferAssetLoader<'w> {
-    pub fn load_render_target(
-        &mut self,
-        creation_data: ExternalBufferCreationData,
-    ) -> ExternalRenderTargetBundle {
-        let params = &mut self.render_target_loader_params;
-
-        let view_handle = params.manual_texture_view_handles.reserve_handle();
-        let buffer_handle = self.add(ExternalBuffer {
-            creation_data: Some(creation_data),
-            usage: ExternalBufferUsage::RenderTarget(view_handle),
-        });
-        ExternalRenderTargetBundle::new(ExternalRenderTarget {
-            _buffer_handle: buffer_handle,
-            view_handle,
-        })
-    }
-}
-
 #[derive(Component, Debug)]
-struct ExternalRenderTarget {
-    _buffer_handle: Handle<ExternalBuffer>,
-    pub(crate) view_handle: ManualTextureViewHandle,
+pub struct ExternalRenderTarget {
+    _buffer_handle: UntypedHandle,
+    view_handle: ManualTextureViewHandle,
+}
+
+#[derive(TypePath, Debug)]
+pub struct CameraRenderTarget {
+    view_handle: ManualTextureViewHandle,
+}
+
+impl ExternalBufferUsage for CameraRenderTarget {
+    type PublicType = ExternalRenderTargetBundle;
+    type MainParams = SResMut<ManualTextureViewHandles>;
+    type RenderParams = SResMut<PendingExternalRenderTargets>;
+
+    fn texture_usages() -> TextureUsages {
+        TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST
+    }
+
+    fn init(
+        buffer_handle: UntypedHandle,
+        params: &mut SystemParamItem<Self::MainParams>,
+    ) -> (Self, Self::PublicType) {
+        let texture_view_handles = params;
+        let view_handle = texture_view_handles.reserve_handle();
+        (
+            Self { view_handle },
+            ExternalRenderTargetBundle::new(buffer_handle, view_handle),
+        )
+    }
+
+    fn on_buffer_imported(
+        event: On<ExternalBufferImported<Self>>,
+        params: &mut SystemParamItem<Self::RenderParams>,
+    ) {
+        let pending_targets = params;
+        let ExternalBufferImported {
+            asset_id: _,
+            texture,
+            view,
+            usage_data,
+        } = event.deref();
+
+        let extent_3d = texture.size();
+        let manual_view = ManualTextureView {
+            texture_view: view.clone(),
+            size: uvec2(extent_3d.width, extent_3d.height),
+            view_format: texture.format(),
+        };
+
+        pending_targets.insert(usage_data.view_handle, manual_view);
+    }
 }
 
 #[derive(Bundle, Debug)]
@@ -61,16 +89,19 @@ pub struct ExternalRenderTargetBundle {
 }
 
 impl ExternalRenderTargetBundle {
-    fn new(external_target: ExternalRenderTarget) -> Self {
+    fn new(buffer_handle: UntypedHandle, view_handle: ManualTextureViewHandle) -> Self {
         Self {
-            external_target,
+            external_target: ExternalRenderTarget {
+                _buffer_handle: buffer_handle,
+                view_handle,
+            },
             render_target: RenderTarget::None { size: UVec2::ZERO },
         }
     }
 }
 
 #[derive(Resource, Default)]
-struct ManualTextureViewHandles {
+pub struct ManualTextureViewHandles {
     next_id: u32,
 }
 
@@ -83,45 +114,16 @@ impl ManualTextureViewHandles {
 }
 
 mod render_world {
-    use super::ExternalRenderTarget;
-    use crate::asset::render_world::ExternalBufferImported;
-    use crate::asset::ExternalBufferUsage;
+    use crate::render_target::ExternalRenderTarget;
     use bevy::{
         camera::{ManualTextureViewHandle, RenderTarget},
         platform::collections::HashMap,
         prelude::*,
         render::{texture::ManualTextureView, MainWorld},
     };
-    use std::ops::Deref;
 
     #[derive(Resource, Default, Debug, Deref, DerefMut)]
     pub struct PendingExternalRenderTargets(HashMap<ManualTextureViewHandle, ManualTextureView>);
-
-    pub fn add_pending_target_on_buffer_imported(
-        event: On<ExternalBufferImported>,
-        mut pending_targets: ResMut<PendingExternalRenderTargets>,
-    ) {
-        let ExternalBufferImported {
-            asset_id: _,
-            texture,
-            view,
-            usage,
-        } = event.deref();
-
-        let handle = match usage {
-            ExternalBufferUsage::RenderTarget(handle) => *handle,
-            _ => return,
-        };
-
-        let extent_3d = texture.size();
-        let manual_view = ManualTextureView {
-            texture_view: view.clone(),
-            size: uvec2(extent_3d.width, extent_3d.height),
-            view_format: texture.format(),
-        };
-
-        pending_targets.insert(handle, manual_view);
-    }
 
     pub fn sync_render_targets(
         mut main_world: ResMut<MainWorld>,

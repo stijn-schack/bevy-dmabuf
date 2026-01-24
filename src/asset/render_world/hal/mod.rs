@@ -1,37 +1,35 @@
 use crate::{
-    asset::{
-        render_world::{ImportError, ImportedTexture},
-        ExternalBufferUsage,
-    },
+    asset::render_world::{ImportError, ImportedTexture},
     dmatex::{Dmatex, DmatexPlane},
 };
 use ash::vk;
+use bevy::render::render_resource::TextureUsages;
 use drm_fourcc::DrmModifier;
+use formats::vulkan_to_wgpu;
 use std::os::fd::IntoRawFd;
 use wgpu::hal::{api::Vulkan, vulkan::Device as VkDevice};
-
-use formats::vulkan_to_wgpu;
+use wgpu::TextureUses;
 
 mod formats;
 
 pub fn import_dmabuf_as_texture(
     device: &wgpu::Device,
     dma: Dmatex,
-    usage: ExternalBufferUsage,
+    usages: TextureUsages,
 ) -> Result<ImportedTexture, ImportError> {
     let vk_device = unsafe { device.as_hal::<Vulkan>().ok_or(ImportError::NotVulkan) }?;
 
     let vk_format = choose_vk_format(&dma)?;
     let wgpu_format = vulkan_to_wgpu(vk_format).ok_or(ImportError::WgpuIncompatibleFormat)?;
-    let wgpu_desc = wgpu_texture_desc(&dma, wgpu_format, usage);
+    let wgpu_desc = wgpu_texture_desc(&dma, wgpu_format, usages);
 
     ensure_modifier_supported(&vk_device, vk_format, dma.format.modifier)?;
 
-    let disjoint = needs_disjoint(&dma);
+    let disjoint = wgpu_format.is_multi_planar_format();
     let image = create_vk_image(&vk_device, &dma, vk_format, disjoint)?;
     let mem_props = get_mem_props(&vk_device);
 
-    let hal_tex_desc = hal_texture_desc(&dma, wgpu_format, usage);
+    let hal_tex_desc = hal_texture_desc(&dma, wgpu_format, usages);
 
     let plane_binds = import_and_bind_image_memory(&vk_device, dma, image, disjoint, &mem_props)?;
 
@@ -57,7 +55,7 @@ pub fn import_dmabuf_as_texture(
 
     Ok(ImportedTexture {
         texture: wgpu_texture.into(),
-        texture_view: view.into(),
+        view: view.into(),
     })
 }
 
@@ -70,10 +68,6 @@ fn choose_vk_format(dma: &Dmatex) -> Result<vk::Format, ImportError> {
         base
     };
     Ok(fmt)
-}
-
-fn needs_disjoint(desc: &Dmatex) -> bool {
-    desc.planes.len() > 1
 }
 
 fn ensure_modifier_supported(
@@ -356,22 +350,29 @@ fn bind_image_memory(
 fn hal_texture_desc(
     dma: &Dmatex,
     format: wgpu::TextureFormat,
-    usage: ExternalBufferUsage,
+    usages: TextureUsages,
 ) -> wgpu::hal::TextureDescriptor<'static> {
     use wgpu::hal::MemoryFlags;
-    use wgpu::{Extent3d, TextureDimension, TextureUses};
+    use wgpu::{Extent3d, TextureDimension};
 
-    let usage = match usage {
-        #[cfg(feature = "sampling")]
-        ExternalBufferUsage::Sampling { .. } => TextureUses::RESOURCE | TextureUses::COPY_SRC,
-        #[cfg(feature = "render_target")]
-        ExternalBufferUsage::RenderTarget { .. } => {
-            TextureUses::COLOR_TARGET | TextureUses::COPY_DST
-        }
-    };
+    let is_depth = format.is_depth_stencil_format();
+    let usage = usages
+        .iter()
+        .map(|usage| match usage {
+            TextureUsages::COPY_SRC => TextureUses::COPY_SRC,
+            TextureUsages::COPY_DST => TextureUses::COPY_DST,
+            TextureUsages::TEXTURE_BINDING if is_depth => TextureUses::DEPTH_STENCIL_READ,
+            TextureUsages::TEXTURE_BINDING if !is_depth => TextureUses::RESOURCE,
+            TextureUsages::RENDER_ATTACHMENT if is_depth => TextureUses::DEPTH_STENCIL_WRITE,
+            TextureUsages::RENDER_ATTACHMENT if !is_depth => TextureUses::COLOR_TARGET,
+            TextureUsages::STORAGE_BINDING => TextureUses::STORAGE_READ_WRITE,
+            TextureUsages::STORAGE_ATOMIC => TextureUses::STORAGE_ATOMIC,
+            _ => TextureUses::empty(),
+        })
+        .collect::<TextureUses>();
 
     wgpu::hal::TextureDescriptor {
-        label: Some("imported-dmabuf-texture"),
+        label: Some("external-texture"),
         size: Extent3d {
             width: dma.res.x,
             height: dma.res.y,
@@ -390,20 +391,9 @@ fn hal_texture_desc(
 fn wgpu_texture_desc(
     dma: &Dmatex,
     format: wgpu::TextureFormat,
-    usage: ExternalBufferUsage,
+    usage: TextureUsages,
 ) -> wgpu::TextureDescriptor<'static> {
-    use wgpu::{Extent3d, TextureDimension, TextureUsages};
-
-    let usage = match usage {
-        #[cfg(feature = "sampling")]
-        ExternalBufferUsage::Sampling { .. } => {
-            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC
-        }
-        #[cfg(feature = "render_target")]
-        ExternalBufferUsage::RenderTarget { .. } => {
-            TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST
-        }
-    };
+    use wgpu::{Extent3d, TextureDimension};
 
     wgpu::TextureDescriptor {
         label: None,

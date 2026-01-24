@@ -3,10 +3,10 @@ name = "bevy-dmabuf"
 version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-rust-version = "1.88"
-repository = "https://github.com/Schmarni-Dev/bevy-dmabuf/"
-description = "allows importing linux dmabufs into a bevy image"
-keywords = ["bevy", "dmabuf", "dmatex"]
+rust-version = "1.89"
+repository = "https://github.com/stijn-schack/bevy-dmabuf/"
+description = "Import external buffers into Bevy's renderer"
+keywords = ["bevy", "dmabuf", "graphics", "gamedev"]
 
 [features]
 default = ["sampling", "render_target"]
